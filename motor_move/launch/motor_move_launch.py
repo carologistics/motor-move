@@ -22,10 +22,11 @@ def generate_launch_description():
     param_substitutions = {"use_sim_time": use_sim_time}
 
     # Create temporary YAML with substitutions
+    # Uses "motor_move" as root key - same config for all robots
     configured_params = ParameterFile(
         RewrittenYaml(
             source_file=config,
-            root_key=namespace,  # assumes namespace is defined in YAML structure under nodes
+            root_key="motor_move",  # Loads motor_move/ros__parameters (same for all robots)
             param_rewrites=param_substitutions,
             convert_types=True,
         ),

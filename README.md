@@ -19,7 +19,7 @@ colcon build --packages-select motor_move_msgs motor_move
 source install/setup.bash
 
 # Start
-ros2 launch motor_move motor_move_launch.py namespace:=robotinobase3
+ros2 launch motor_move motor_move_launch.py namespace:=robotino1
 ```
 
 ## 📥 Action Goals
@@ -39,17 +39,17 @@ ros2 launch motor_move motor_move_launch.py namespace:=robotinobase3
 
 Vorwärtsbewegung mit Quaternion:
 ```bash
-ros2 action send_goal /robotinobase3/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotinobase3/base_link'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 9999.0}" --feedback
+ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 9999.0}" --feedback
 ```
 
 Rotation um 90° mit Grad (einfacher):
 ```bash
-ros2 action send_goal /robotinobase3/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotinobase3/base_link'}, pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 90.0}" --feedback
+ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 90.0}" --feedback
 ```
 
 Bewegung + Rotation mit Grad:
 ```bash
-ros2 action send_goal /robotinobase3/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotinobase3/base_link'}, pose: {position: {x: 1.0, y: 0.5, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 45.0}" --feedback
+ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 1.0, y: 0.5, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 45.0}" --feedback
 ```
 
 ## ⚙️ Konfiguration
@@ -79,17 +79,17 @@ motor_move:
 ## 🔧 Multi-Robot Setup
 
 ```bash
-ros2 launch motor_move motor_move_launch.py namespace:=robotinobase1
-ros2 launch motor_move motor_move_launch.py namespace:=robotinobase2
+ros2 launch motor_move motor_move_launch.py namespace:=robotino1
+ros2 launch motor_move motor_move_launch.py namespace:=robotino2
 ```
 
 ## 🐛 Debugging
 
 ```bash
 ros2 action list
-ros2 action info /robotinobase3/motor_move_action
+ros2 action info /robotino1/motor_move_action
 ros2 run tf2_tools view_frames
-ros2 topic echo /robotinobase3/cmd_vel
+ros2 topic echo /robotino1/cmd_vel
 ```
 
 ## 📄 License
