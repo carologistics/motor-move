@@ -146,13 +146,38 @@ rclcpp_action::GoalResponse
 MotorMove::handle_goal(const rclcpp_action::GoalUUID &uuid,
                        std::shared_ptr<const MotorMoveAction::Goal> goal) {
   (void)uuid; // Silence unused variable warning.
-  RCLCPP_INFO(this->get_logger(), "Received goal requst with order x: %f y: %f",
-              goal->motor_goal.pose.position.x,
-              goal->motor_goal.pose.position.y); // Log goal details.
+  
+  // Create a copy of the goal pose to potentially modify
+  PoseStamped goal_pose = goal->motor_goal;
+  
+  // Check if yaw_angle_deg is provided and valid (between -360 and 360 degrees)
+  // If valid, convert it to a quaternion and override the orientation
+  // Otherwise, use the quaternion from motor_goal
+  if (goal->yaw_angle_deg >= -360.0 && goal->yaw_angle_deg <= 360.0 && 
+      !std::isnan(goal->yaw_angle_deg) && !std::isinf(goal->yaw_angle_deg)) {
+    // Convert yaw angle from degrees to radians, then to quaternion
+    double yaw_rad = goal->yaw_angle_deg * M_PI / 180.0;
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, yaw_rad); // Roll=0, Pitch=0, Yaw=provided angle in radians
+    goal_pose.pose.orientation = tf2::toMsg(q);
+    
+    RCLCPP_INFO(this->get_logger(), "Received goal with yaw angle: %f deg (%f rad)", 
+                goal->yaw_angle_deg, yaw_rad);
+  } else {
+    // Use quaternion from motor_goal
+    RCLCPP_INFO(this->get_logger(), "Received goal with quaternion orientation (x: %f, y: %f, z: %f, w: %f)", 
+                goal_pose.pose.orientation.x, goal_pose.pose.orientation.y,
+                goal_pose.pose.orientation.z, goal_pose.pose.orientation.w);
+  }
+  
+  RCLCPP_INFO(this->get_logger(), "Received goal request with order x: %f y: %f",
+              goal_pose.pose.position.x,
+              goal_pose.pose.position.y); // Log goal details.
+  
   try {
     std::lock_guard lock{target_pose_mutex_}; // Lock the mutex for thread safety.
     target_pose_ =
-        to_frame(std::make_shared<PoseStamped>(goal->motor_goal), odom_frame_); // Transform target pose to odom frame.
+        to_frame(std::make_shared<PoseStamped>(goal_pose), odom_frame_); // Transform target pose to odom frame.
     target_pose_.header.stamp = rclcpp::Time(0); // Set timestamp to zero.
   } catch (tf2::TransformException &ex) { // Handle transformation errors.
     RCLCPP_ERROR(this->get_logger(), "Transform error: %s", ex.what());
