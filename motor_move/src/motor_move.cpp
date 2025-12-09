@@ -4,6 +4,7 @@
 #include <eigen3/Eigen/src/Core/Matrix.h> // Include Eigen for matrix operations.
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp> // JW
 #include "tf2/utils.h"
+#include <cmath> // For M_PI constant
 
 namespace motor_move {
 
@@ -114,6 +115,9 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   // Initialize TF2 buffer and listener for transformations.
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
+  
+  // Declare timeout parameter (default: 30 seconds)
+  this->declare_parameter("timeout_seconds", 30.0);
 }
 
 // Destructor for MotorMove class
@@ -188,31 +192,68 @@ void MotorMove::execute(
     const std::shared_ptr<GoalHandleMotorMove> goal_handle) {
   MotorMoveAction::Feedback::SharedPtr feedback =
       std::make_shared<MotorMoveAction::Feedback>(); // Create feedback object.
+  MotorMoveAction::Result::SharedPtr result =
+      std::make_shared<MotorMoveAction::Result>(); // Create result object.
   float &distance = feedback->distance_to_target; // Reference to distance feedback.
-  (void)goal_handle; // Silence unused variable warning.
+  
+  // Get timeout parameter (default: 30 seconds)
+  double timeout_seconds;
+  this->get_parameter("timeout_seconds", timeout_seconds);
+  rclcpp::Duration timeout_duration = rclcpp::Duration::from_seconds(timeout_seconds);
+  
+  // Define tolerance: 5 degrees in radians
+  const double YAW_TOLERANCE = 5.0 * M_PI / 180.0; // Exactly 5 degrees
+  const double DISTANCE_TOLERANCE = 0.05; // 5 cm
+  
   rclcpp::Rate loop_rate(15); // Set loop rate to 15 Hz.
-  rclcpp::Time current_time = this->now(); // Get current time.
+  rclcpp::Time start_time = this->now(); // Record start time for timeout.
+  rclcpp::Time current_time = start_time; // Get current time.
+  
   while (rclcpp::ok()) { // Main loop.
-    if (goal_handle->is_canceling()) { // Check if goal is canceling.
+    // Check for cancellation
+    if (goal_handle->is_canceling()) {
       goal_handle->publish_feedback(feedback); // Publish feedback.
+      result->success = false; // Set failure state.
+      goal_handle->canceled(result); // Cancel the goal.
       RCLCPP_INFO(this->get_logger(), "Goal canceled");
       return; // Exit the loop.
     }
+    
+    // Check for timeout
+    current_time = this->now();
+    rclcpp::Duration elapsed = current_time - start_time;
+    if (elapsed > timeout_duration) {
+      geometry_msgs::msg::Twist stop_cmd;
+      stop_cmd.linear.x = 0.0;
+      stop_cmd.linear.y = 0.0;
+      stop_cmd.angular.z = 0.0;
+      cmd_vel_->publish(stop_cmd);
+      
+      result->success = false; // Set failure state.
+      goal_handle->abort(result); // Abort with timeout.
+      RCLCPP_WARN(this->get_logger(), "Goal timed out after %f seconds", timeout_seconds);
+      RCLCPP_INFO(this->get_logger(), "Distance to target: %f", distance);
+      return; // Exit the loop.
+    }
+    
     RCLCPP_INFO(this->get_logger(), "Execute goal");
     PoseStamped error =
         to_frame(std::make_shared<PoseStamped>(target_pose_), base_frame_); // Transform target pose to base frame.
     distance = calculate_distance(error); // Calculate distance to target.
     goal_handle->publish_feedback(feedback); // Publish feedback.
-    float yaw = tf2::getYaw(error.pose.orientation); // Calculate yaw to target.
-    if (yaw > 0.0872665f || distance > 0.05) { // Check thresholds for yaw and distance.
-
-      RCLCPP_INFO(this->get_logger(), "Distance to yes");
+    
+    float yaw = std::abs(tf2::getYaw(error.pose.orientation)); // Calculate absolute yaw to target.
+    
+    // Check if within tolerance (5° for yaw, 5cm for distance)
+    if (yaw > YAW_TOLERANCE || distance > DISTANCE_TOLERANCE) {
+      RCLCPP_INFO(this->get_logger(), "Distance to target: %f, Yaw error: %f (tolerance: %f)", 
+                  distance, yaw, YAW_TOLERANCE);
       rclcpp::Time previous_time = current_time; // Store previous time.
       current_time = this->now(); // Update current time.
       rclcpp::Duration delta_t = current_time - previous_time; // Calculate time difference.
       RCLCPP_INFO(this->get_logger(), "Time delta %f", delta_t.seconds());
       Eigen::MatrixXd error_matrix(3, 1); // Create error matrix.
-      error_matrix << error.pose.position.x, error.pose.position.y, yaw; // Fill error matrix.
+      error_matrix << error.pose.position.x, error.pose.position.y, tf2::getYaw(error.pose.orientation); // Fill error matrix (signed yaw).
       Eigen::MatrixXd output = mimo_.compute(error_matrix, delta_t.seconds()); // Compute control output.
       
       // Enhanced debugging for x vs y axis issue
@@ -226,22 +267,32 @@ void MotorMove::execute(
       cmd_vel.linear.y = output(1, 0); // Set linear y velocity.
       cmd_vel.angular.z = output(2, 0); // Set angular velocity.
       cmd_vel_->publish(cmd_vel); // Publish velocity command.
-    }else {
-    geometry_msgs::msg::Twist stop_cmd;
-    stop_cmd.linear.x = 0.0;
-    stop_cmd.linear.y = 0.0;
-    stop_cmd.angular.z = 0.0;
-    cmd_vel_->publish(stop_cmd);
-    
-    goal_handle->succeed(std::make_shared<MotorMoveAction::Result>());
-    RCLCPP_INFO(this->get_logger(), "Ziel erreicht.");
-    RCLCPP_INFO(this->get_logger(), "Distance to target: %f", distance); // Log distance.
-    RCLCPP_INFO(this->get_logger(), "Yaw to target: %f", yaw); // Log yaw.
-    RCLCPP_INFO(this->get_logger(), "Delta x: %f y: %f", error.pose.position.x,
-                error.pose.position.y); // Log position deltas.
-    return;
+    } else {
+      // Tolerance reached - success!
+      geometry_msgs::msg::Twist stop_cmd;
+      stop_cmd.linear.x = 0.0;
+      stop_cmd.linear.y = 0.0;
+      stop_cmd.angular.z = 0.0;
+      cmd_vel_->publish(stop_cmd);
+      
+      result->success = true; // Set success state.
+      goal_handle->succeed(result); // Succeed with result.
+      RCLCPP_INFO(this->get_logger(), "Ziel erreicht - Toleranz erfüllt (Yaw: %f <= %f, Distance: %f <= %f)", 
+                  yaw, YAW_TOLERANCE, distance, DISTANCE_TOLERANCE);
+      RCLCPP_INFO(this->get_logger(), "Distance to target: %f", distance);
+      RCLCPP_INFO(this->get_logger(), "Yaw to target: %f", yaw);
+      RCLCPP_INFO(this->get_logger(), "Delta x: %f y: %f", error.pose.position.x,
+                  error.pose.position.y);
+      return;
     }
-  } 
+    
+    loop_rate.sleep(); // Sleep to maintain loop rate.
+  }
+  
+  // If we exit the loop without success, set failure
+  result->success = false;
+  goal_handle->abort(result);
+  RCLCPP_WARN(this->get_logger(), "Goal execution ended without success");
 }
 } // namespace motor_move
 
