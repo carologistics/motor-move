@@ -457,9 +457,9 @@ ros2 topic echo /robotinobase3/cmd_vel
 
 ## 📄 License
 
-MIT License - Copyright Carologistics
+Apache 2.0 License - Copyright Carologistics
 
 ## 👥 Maintainer
 
 - Original: Carologistics
-- Maintainer: tim.wendt@alumni.fh-aachen.de
+- Maintainer: jacob.weyer@rwth-aachen.de
