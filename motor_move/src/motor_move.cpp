@@ -220,7 +220,8 @@ void MotorMove::execute(
   
   rclcpp::Rate loop_rate(loop_rate_hz); // Set loop rate from parameter.
   rclcpp::Time start_time = this->now(); // Record start time for timeout.
-  rclcpp::Time current_time = start_time; // Get current time.
+  rclcpp::Time current_time = this->now(); // Get current time.
+  rclcpp::Time previous_time = current_time; // Initialize previous time for delta_t calculation.
   
   while (rclcpp::ok()) { // Main loop.
     // Check for cancellation
@@ -232,7 +233,7 @@ void MotorMove::execute(
       return; // Exit the loop.
     }
     
-    // Check for timeout
+    // Update current time and check for timeout
     current_time = this->now();
     rclcpp::Duration elapsed = current_time - start_time;
     if (elapsed > timeout_duration) {
@@ -261,13 +262,22 @@ void MotorMove::execute(
     if (yaw > YAW_TOLERANCE || distance > DISTANCE_TOLERANCE) {
       RCLCPP_INFO(this->get_logger(), "Distance to target: %f, Yaw error: %f (tolerance: %f)", 
                   distance, yaw, YAW_TOLERANCE);
-      rclcpp::Time previous_time = current_time; // Store previous time.
-      current_time = this->now(); // Update current time.
-      rclcpp::Duration delta_t = current_time - previous_time; // Calculate time difference.
-      RCLCPP_INFO(this->get_logger(), "Time delta %f", delta_t.seconds());
+      
+      // Calculate time difference for PID controller
+      rclcpp::Duration delta_t = current_time - previous_time;
+      
+      // Ensure minimum delta_t to avoid division by zero or very large derivatives
+      double dt = delta_t.seconds();
+      if (dt <= 0.0 || dt > 1.0) {
+        // If delta_t is invalid, use expected loop time
+        dt = 1.0 / loop_rate_hz;
+        RCLCPP_WARN(this->get_logger(), "Invalid delta_t, using expected loop time: %f", dt);
+      }
+      
+      RCLCPP_INFO(this->get_logger(), "Time delta %f", dt);
       Eigen::MatrixXd error_matrix(3, 1); // Create error matrix.
       error_matrix << error.pose.position.x, error.pose.position.y, tf2::getYaw(error.pose.orientation); // Fill error matrix (signed yaw).
-      Eigen::MatrixXd output = mimo_.compute(error_matrix, delta_t.seconds()); // Compute control output.
+      Eigen::MatrixXd output = mimo_.compute(error_matrix, dt); // Compute control output.
       
       // Enhanced debugging for x vs y axis issue
       RCLCPP_INFO(this->get_logger(), "Error matrix - x: %f, y: %f, yaw: %f", 
@@ -280,6 +290,9 @@ void MotorMove::execute(
       cmd_vel.linear.y = output(1, 0); // Set linear y velocity.
       cmd_vel.angular.z = output(2, 0); // Set angular velocity.
       cmd_vel_->publish(cmd_vel); // Publish velocity command.
+      
+      // Update previous_time for next iteration
+      previous_time = current_time;
     } else {
       // Tolerance reached - success!
       geometry_msgs::msg::Twist stop_cmd;
