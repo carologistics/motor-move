@@ -69,55 +69,60 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
       std::bind(&MotorMove::handle_cancel, this, _1), // Callback for cancel requests.
       std::bind(&MotorMove::handle_accepted, this, _1)); // Callback for accepted goals.
 
-  // Initialize control matrices (Kp, Ki, Kd)
-  Eigen::MatrixXd Kp(3, 3); // Proportional gain matrix.
-  Kp << 1.8, 0, 0, 0, 1.8, 0, 0, 0, 1.8;
-
-  Eigen::MatrixXd Ki(3, 3); // Integral gain matrix.
-  Ki << 0.38, 0, 0, 0, 0.38, 0, 0, 0, 0.38;
-
-  Eigen::MatrixXd Kd(3, 3); // Derivative gain matrix.
-  Kd << 0.2, 0, 0, 0, 0.2, 0, 0, 0, 0.2;
-
-  // Declare parameters for control gains as flattened vectors.
-  std::vector<double> default_parameter = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-  this->declare_parameter("Kp", default_parameter);
-  this->declare_parameter("Ki", default_parameter);
-  this->declare_parameter("Kd", default_parameter);
+  // Declare and retrieve PID control gains from parameters
+  // Default values (will be used if parameter file doesn't specify them)
+  std::vector<double> default_Kp = {1.8, 0.0, 0.0, 0.0, 1.8, 0.0, 0.0, 0.0, 1.8};
+  std::vector<double> default_Ki = {0.38, 0.0, 0.0, 0.0, 0.38, 0.0, 0.0, 0.0, 0.38};
+  std::vector<double> default_Kd = {0.2, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.2};
+  
+  this->declare_parameter("Kp", default_Kp);
+  this->declare_parameter("Ki", default_Ki);
+  this->declare_parameter("Kd", default_Kd);
 
   // Retrieve control gains from parameters.
-  Eigen::MatrixXd Kp_retrieved = get_matrix_parameter("Kp", 3, 3);
-  Eigen::MatrixXd Ki_retrieved = get_matrix_parameter("Ki", 3, 3);
-  Eigen::MatrixXd Kd_retrieved = get_matrix_parameter("Kd", 3, 3);
+  Eigen::MatrixXd Kp_matrix = get_matrix_parameter("Kp", 3, 3);
+  Eigen::MatrixXd Ki_matrix = get_matrix_parameter("Ki", 3, 3);
+  Eigen::MatrixXd Kd_matrix = get_matrix_parameter("Kd", 3, 3);
 
   // Log the retrieved control matrices.
   RCLCPP_INFO(this->get_logger(), "Kp:\n%s",
-              matrix_to_string(Kp_retrieved).c_str());
+              matrix_to_string(Kp_matrix).c_str());
   RCLCPP_INFO(this->get_logger(), "Ki:\n%s",
-              matrix_to_string(Ki_retrieved).c_str());
+              matrix_to_string(Ki_matrix).c_str());
   RCLCPP_INFO(this->get_logger(), "Kd:\n%s",
-              matrix_to_string(Kd_retrieved).c_str());
+              matrix_to_string(Kd_matrix).c_str());
 
   // Set control gains in the MIMO controller.
-  // Use retrieved parameters if they are non-zero, otherwise use defaults
-  Eigen::MatrixXd Kp_to_use = (Kp_retrieved.array().abs().sum() > 1e-6) ? Kp_retrieved : Kp;
-  Eigen::MatrixXd Ki_to_use = (Ki_retrieved.array().abs().sum() > 1e-6) ? Ki_retrieved : Ki;
-  Eigen::MatrixXd Kd_to_use = (Kd_retrieved.array().abs().sum() > 1e-6) ? Kd_retrieved : Kd;
+  mimo_.set_Kp(Kp_matrix);
+  mimo_.set_Ki(Ki_matrix);
+  mimo_.set_Kd(Kd_matrix);
   
-  mimo_.set_Kp(Kp_to_use);
-  mimo_.set_Ki(Ki_to_use);
-  mimo_.set_Kd(Kd_to_use);
-  
-  RCLCPP_INFO(this->get_logger(), "Using Kp:\n%s", matrix_to_string(Kp_to_use).c_str());
-  RCLCPP_INFO(this->get_logger(), "Using Ki:\n%s", matrix_to_string(Ki_to_use).c_str());
-  RCLCPP_INFO(this->get_logger(), "Using Kd:\n%s", matrix_to_string(Kd_to_use).c_str());
+  RCLCPP_INFO(this->get_logger(), "Using Kp:\n%s", matrix_to_string(Kp_matrix).c_str());
+  RCLCPP_INFO(this->get_logger(), "Using Ki:\n%s", matrix_to_string(Ki_matrix).c_str());
+  RCLCPP_INFO(this->get_logger(), "Using Kd:\n%s", matrix_to_string(Kd_matrix).c_str());
 
   // Initialize TF2 buffer and listener for transformations.
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
   
-  // Declare timeout parameter (default: 30 seconds)
-  this->declare_parameter("timeout_seconds", 30.0);
+  // Declare control parameters
+  this->declare_parameter("loop_rate", 15.0);
+  this->declare_parameter("timeout_seconds", 10.0);
+  this->declare_parameter("yaw_tolerance_degrees", 5.0);
+  this->declare_parameter("distance_tolerance", 0.05);
+  
+  // Log loaded parameters
+  double loop_rate_val, timeout_val, yaw_tol_val, dist_tol_val;
+  this->get_parameter("loop_rate", loop_rate_val);
+  this->get_parameter("timeout_seconds", timeout_val);
+  this->get_parameter("yaw_tolerance_degrees", yaw_tol_val);
+  this->get_parameter("distance_tolerance", dist_tol_val);
+  
+  RCLCPP_INFO(this->get_logger(), "Control parameters loaded:");
+  RCLCPP_INFO(this->get_logger(), "  Loop rate: %f Hz", loop_rate_val);
+  RCLCPP_INFO(this->get_logger(), "  Timeout: %f seconds", timeout_val);
+  RCLCPP_INFO(this->get_logger(), "  Yaw tolerance: %f degrees", yaw_tol_val);
+  RCLCPP_INFO(this->get_logger(), "  Distance tolerance: %f meters", dist_tol_val);
 }
 
 // Destructor for MotorMove class
@@ -196,16 +201,24 @@ void MotorMove::execute(
       std::make_shared<MotorMoveAction::Result>(); // Create result object.
   float &distance = feedback->distance_to_target; // Reference to distance feedback.
   
-  // Get timeout parameter (default: 30 seconds)
+  // Get parameters from node
   double timeout_seconds;
+  double loop_rate_hz;
+  double yaw_tolerance_degrees;
+  double distance_tolerance;
+  
   this->get_parameter("timeout_seconds", timeout_seconds);
+  this->get_parameter("loop_rate", loop_rate_hz);
+  this->get_parameter("yaw_tolerance_degrees", yaw_tolerance_degrees);
+  this->get_parameter("distance_tolerance", distance_tolerance);
+  
   rclcpp::Duration timeout_duration = rclcpp::Duration::from_seconds(timeout_seconds);
   
-  // Define tolerance: 5 degrees in radians
-  const double YAW_TOLERANCE = 5.0 * M_PI / 180.0; // Exactly 5 degrees
-  const double DISTANCE_TOLERANCE = 0.05; // 5 cm
+  // Convert yaw tolerance from degrees to radians
+  const double YAW_TOLERANCE = yaw_tolerance_degrees * M_PI / 180.0;
+  const double DISTANCE_TOLERANCE = distance_tolerance;
   
-  rclcpp::Rate loop_rate(15); // Set loop rate to 15 Hz.
+  rclcpp::Rate loop_rate(loop_rate_hz); // Set loop rate from parameter.
   rclcpp::Time start_time = this->now(); // Record start time for timeout.
   rclcpp::Time current_time = start_time; // Get current time.
   

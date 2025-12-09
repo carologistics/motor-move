@@ -1,5 +1,19 @@
 motor_move:
   ros__parameters:
-    Kp: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    Ki: [0.1, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1]
-    Kd: [0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01]
+    # PID Control Gains (3x3 matrices as flattened row-major vectors)
+    # Format: [Kp_x, 0, 0, 0, Kp_y, 0, 0, 0, Kp_yaw]
+    Kp: [1.8, 0.0, 0.0, 0.0, 1.8, 0.0, 0.0, 0.0, 1.8]
+    Ki: [0.38, 0.0, 0.0, 0.0, 0.38, 0.0, 0.0, 0.0, 0.38]
+    Kd: [0.2, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.2]
+    
+    # Control loop rate in Hz
+    loop_rate: 15.0
+    
+    # Timeout for goal execution in seconds
+    timeout_seconds: 10.0
+    
+    # Tolerance parameters
+    # Yaw tolerance in degrees (will be converted to radians)
+    yaw_tolerance_degrees: 5.0
+    # Distance tolerance in meters
+    distance_tolerance: 0.05
