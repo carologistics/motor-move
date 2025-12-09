@@ -1,7 +1,4 @@
 geometry_msgs/PoseStamped motor_goal
-# Optional: Yaw angle in degrees. If set to a value between -360 and 360, this will override the orientation in motor_goal.
-# Set to 9999.0 (or any value outside -360..360) to use the quaternion from motor_goal instead.
-float64 yaw_angle_deg
 ---
 bool success
 ---

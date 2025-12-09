@@ -29,27 +29,22 @@ ros2 launch motor_move motor_move_launch.py namespace:=robotino1
 
 **Goal Fields**:
 - `motor_goal`: PoseStamped mit Position (x, y) und Quaternion-Orientierung
-- `yaw_angle_deg`: Optionaler Yaw-Winkel in Grad (-360 bis 360). Wenn gesetzt, überschreibt die Quaternion-Orientierung
-
-**Beide Methoden funktionieren**:
-- **Mit Quaternion**: Setze `yaw_angle_deg` auf einen Wert außerhalb -360..360 (z.B. 9999.0) oder lasse es weg
-- **Mit Grad**: Setze `yaw_angle_deg` auf einen Wert zwischen -360 und 360
 
 **Beispiele**:
 
-Vorwärtsbewegung mit Quaternion:
+Vorwärtsbewegung (1m):
 ```bash
-ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 9999.0}" --feedback
+ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}" --feedback
 ```
 
-Rotation um 90° mit Grad (einfacher):
+Rotation um 90° (Quaternion):
 ```bash
-ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 90.0}" --feedback
+ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.707, w: 0.707}}}" --feedback
 ```
 
-Bewegung + Rotation mit Grad:
+Bewegung + Rotation:
 ```bash
-ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 1.0, y: 0.5, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, yaw_angle_deg: 45.0}" --feedback
+ros2 action send_goal /robotino1/motor_move_action motor_move_msgs/action/MotorMove "{motor_goal: {header: {frame_id: 'robotino1/base_link'}, pose: {position: {x: 1.0, y: 0.5, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.382683, w: 0.92388}}}" --feedback
 ```
 
 ## ⚙️ Konfiguration
