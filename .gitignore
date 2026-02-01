@@ -73,3 +73,5 @@ qtcreator-*
 
 # Catkin custom files
 CATKIN_IGNORE
+# PID Tuning Logs
+tuning_logs/

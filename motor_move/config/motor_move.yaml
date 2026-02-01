@@ -1,19 +1,58 @@
+# =============================================================================
+# motor_move Parameter-Datei
+# =============================================================================
+# Kann direkt editiert werden ohne Rebuild (wenn im Launch-File
+# mit absolutem Pfad oder aus dem Source-Ordner referenziert).
+#
+# Tuning-Tipps:
+#   1. Ki und Kd auf 0 setzen, nur Kp tunen
+#   2. Kp erhöhen bis leichte Oszillation auftritt (= Ku)
+#   3. Kp auf ~60% von Ku setzen
+#   4. Ki langsam dazugeben (eliminiert bleibende Abweichung)
+#   5. Kd hinzufügen falls Überschwinger auftreten
+#
+# Format der PID-Matrizen (3x3, zeilenweise):
+#   [Kp_x,  0,     0,      <- Gain für linear.x
+#    0,     Kp_y,  0,      <- Gain für linear.y
+#    0,     0,     Kp_yaw] <- Gain für angular.z
+# =============================================================================
+
 motor_move:
   ros__parameters:
-    # PID Control Gains (3x3 matrices as flattened row-major vectors)
-    # Format: [Kp_x, 0, 0, 0, Kp_y, 0, 0, 0, Kp_yaw]
-    Kp: [1.8, 0.0, 0.0, 0.0, 1.8, 0.0, 0.0, 0.0, 1.8]
-    Ki: [0.38, 0.0, 0.0, 0.0, 0.38, 0.0, 0.0, 0.0, 0.38]
-    Kd: [0.2, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.2]
-    
-    # Control loop rate in Hz
-    loop_rate: 15.0
-    
-    # Timeout for goal execution in seconds
-    timeout_seconds: 10.0
-    
-    # Tolerance parameters
-    # Yaw tolerance in degrees (will be converted to radians)
-    yaw_tolerance_degrees: 5.0
-    # Distance tolerance in meters
-    distance_tolerance: 0.05
+    # --- PID Gains ---
+    # Diagonal = x, y, yaw werden unabhängig geregelt
+    Kp: [1.8, 0.0, 0.0,
+         0.0, 1.8, 0.0,
+         0.0, 0.0, 1.8]
+
+    Ki: [0.38, 0.0, 0.0,
+         0.0, 0.38, 0.0,
+         0.0, 0.0, 0.38]
+
+    Kd: [0.2, 0.0, 0.0,
+         0.0, 0.2, 0.0,
+         0.0, 0.0, 0.2]
+
+    # --- Regelparameter ---
+    loop_rate: 15.0               # Regelfrequenz [Hz]
+    timeout_seconds: 10.0         # Max. Fahrzeit pro Goal [s]
+    yaw_tolerance_degrees: 5.0    # Winkelfehler-Toleranz [°]
+    distance_tolerance: 0.05      # Positionsfehler-Toleranz [m]
+
+    # --- Live Tuning ---
+    # Nur für Tuning-Sessions aktivieren!
+    # Im Normalbetrieb auf false lassen.
+    enable_live_tuning: false
+
+    # --- PID Tuning Logging ---
+    # Aktiviert CSV-Logging aller PID-Daten für Analyse
+    # CSV wird in tuning_log_path/<timestamp>/pid_data.csv gespeichert
+    enable_tuning_log: false
+    tuning_log_path: "/home/robotino/ros2/robotino_navigation_ws/src/motor-move/tuning_logs"
+
+    # Remote Transfer (optional)
+    # Wenn gesetzt, wird die CSV nach Experiment-Ende automatisch per SCP übertragen
+    # Format: "user@host:/pfad/zum/zielordner"
+    # Beispiel: "sam@192.168.1.100:/home/sam/ros2/pid_tuning"
+    # Voraussetzung: SSH-Key-Authentifizierung von rb3 zum Ziel-PC
+    tuning_remote_target: ""
