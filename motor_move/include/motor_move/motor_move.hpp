@@ -3,6 +3,7 @@
 #pragma once
 
 #include "motor_move/mimo.hpp"
+#include "motor_move/motion_profile.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -13,8 +14,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <rcl_interfaces/msg/set_parameters_result.hpp>  // NEU: für Live Tuning Callback
-#include <fstream>  // NEU: für CSV-Logging
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
+#include <fstream>
 
 namespace motor_move {
 using MotorMoveAction = motor_move_msgs::action::MotorMove;
@@ -56,13 +57,12 @@ private:
   void handle_accepted(const std::shared_ptr<GoalHandleMotorMove> goal_handle);
   void execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle);
   inline float calculate_distance(const PoseStamped pose);
-  // double quaternionToYaw(const geometry_msgs::msg::Quaternion &q);
 
   std::string namespace_;
   std::string base_frame_;
   std::string odom_frame_;
 
-  // NEU: Live Tuning
+  // Live Tuning
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
       param_callback_handle_;
   rcl_interfaces::msg::SetParametersResult
@@ -76,14 +76,30 @@ private:
   std::ofstream csv_file_;
   std::string experiment_timestamp_;
   bool logging_active_;
+  std::string tuning_remote_target_;
 
-  // Remote transfer (SCP)
-  std::string tuning_remote_target_;  // z.B. "sam@192.168.1.100:/home/sam/ros2/pid_tuning"
+  // =========================================================================
+  // DECOUPLING (Entkopplung)
+  // =========================================================================
+  bool enable_decoupling_;
+  Eigen::MatrixXd decoupling_matrix_;
+
+  // =========================================================================
+  // FEEDFORWARD (Motion Profile)
+  // =========================================================================
+  bool enable_feedforward_;
+  double max_linear_velocity_;
+  double max_linear_acceleration_;
+  double max_angular_velocity_;
+  double max_angular_acceleration_;
 
   void init_tuning_logging();
-  void log_pid_data(double timestamp, double error_x, double error_y, double error_yaw,
+  void log_pid_data(double timestamp,
+                    double error_x, double error_y, double error_yaw,
                     double cmd_vel_x, double cmd_vel_y, double cmd_vel_yaw,
-                    double target_x, double target_y, double target_yaw);
+                    double target_x, double target_y, double target_yaw,
+                    double ff_vel_x, double ff_vel_y, double ff_vel_yaw,
+                    double pid_vel_x, double pid_vel_y, double pid_vel_yaw);
   void finalize_tuning_logging();
   void generate_plot();
   void transfer_to_remote();
