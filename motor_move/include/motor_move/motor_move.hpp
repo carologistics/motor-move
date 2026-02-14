@@ -1,3 +1,17 @@
+// Copyright (c) 2026 Carologistics
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Licensed under MIT. See LICENSE file. Copyright Carologistics.
 
 #pragma once
@@ -6,16 +20,16 @@
 #include "motor_move/motion_profile.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
+#include <fstream>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <motor_move_msgs/action/motor_move.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <rcl_interfaces/msg/set_parameters_result.hpp>
-#include <fstream>
 
 namespace motor_move {
 using MotorMoveAction = motor_move_msgs::action::MotorMove;
@@ -94,12 +108,12 @@ private:
   double max_angular_acceleration_;
 
   void init_tuning_logging();
-  void log_pid_data(double timestamp,
-                    double error_x, double error_y, double error_yaw,
-                    double cmd_vel_x, double cmd_vel_y, double cmd_vel_yaw,
-                    double target_x, double target_y, double target_yaw,
-                    double ff_vel_x, double ff_vel_y, double ff_vel_yaw,
-                    double pid_vel_x, double pid_vel_y, double pid_vel_yaw);
+  void log_pid_data(double timestamp, double error_x, double error_y,
+                    double error_yaw, double cmd_vel_x, double cmd_vel_y,
+                    double cmd_vel_yaw, double target_x, double target_y,
+                    double target_yaw, double ff_vel_x, double ff_vel_y,
+                    double ff_vel_yaw, double pid_vel_x, double pid_vel_y,
+                    double pid_vel_yaw);
   void finalize_tuning_logging();
   void generate_plot();
   void transfer_to_remote();

@@ -1,3 +1,16 @@
+# Copyright (c) 2026 Carologistics
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # Licensed under MIT. See LICENSE file. Copyright Carologistics.
 import os
 
@@ -51,21 +64,17 @@ def generate_launch_description():
     )
 
     enable_tuning_log_arg = DeclareLaunchArgument(
-        "enable_tuning_log",
-        default_value="false",
-        description="Enable CSV logging of PID data for tuning analysis"
+        "enable_tuning_log", default_value="false", description="Enable CSV logging of PID data for tuning analysis"
     )
 
     enable_live_tuning_arg = DeclareLaunchArgument(
-        "enable_live_tuning",
-        default_value="false",
-        description="Enable live PID parameter tuning via ros2 param set"
+        "enable_live_tuning", default_value="false", description="Enable live PID parameter tuning via ros2 param set"
     )
 
     tuning_remote_target_arg = DeclareLaunchArgument(
         "tuning_remote_target",
         default_value="",
-        description="Remote SCP target for auto-transfer (e.g. sam@192.168.1.100:/home/sam/ros2/pid_tuning)"
+        description="Remote SCP target for auto-transfer (e.g. sam@192.168.1.100:/home/sam/ros2/pid_tuning)",
     )
 
     # Node definition
@@ -78,11 +87,13 @@ def generate_launch_description():
         parameters=[configured_params],
     )
 
-    return LaunchDescription([
-        use_sim_time_arg,
-        namespace_arg,
-        enable_tuning_log_arg,
-        enable_live_tuning_arg,
-        tuning_remote_target_arg,
-        motor_move_node,
-    ])
+    return LaunchDescription(
+        [
+            use_sim_time_arg,
+            namespace_arg,
+            enable_tuning_log_arg,
+            enable_live_tuning_arg,
+            tuning_remote_target_arg,
+            motor_move_node,
+        ]
+    )

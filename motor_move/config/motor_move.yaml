@@ -12,15 +12,30 @@
 #   5. Kd hinzufügen falls Überschwinger auftreten
 #
 # Format der PID-Matrizen (3x3, zeilenweise):
-#   [Kp_x,  0,     0,      <- Gain für linear.x
-#    0,     Kp_y,  0,      <- Gain für linear.y
-#    0,     0,     Kp_yaw] <- Gain für angular.z
+#   [Kp_x,  0,     0,      <- Gain fuer linear.x
+#    0,     Kp_y,  0,      <- Gain fuer linear.y
+#    0,     0,     Kp_yaw] <- Gain fuer angular.z
 # =============================================================================
 
 motor_move:
   ros__parameters:
-    # --- PID Gains ---
-    # Diagonal = x, y, yaw werden unabhängig geregelt
+
+    # =========================================================================
+    # PID Gains
+    # =========================================================================
+    # Die drei Matrizen bestimmen das Verhalten des PID-Reglers.
+    # Diagonal = x, y, yaw werden unabhaengig geregelt.
+    # Off-diagonal-Werte ermoeglichen Kopplung (normalerweise 0).
+    #
+    # Kp (Proportional): Reagiert auf den aktuellen Fehler.
+    #   Hoeher = schnellere Reaktion, aber mehr Ueberschwinger.
+    #
+    # Ki (Integral): Eliminiert bleibende Abweichung (steady-state error).
+    #   Hoeher = schnellere Korrektur, aber kann Oszillation verursachen.
+    #
+    # Kd (Derivative): Daempft Ueberschwinger, bremst vor dem Ziel.
+    #   Hoeher = mehr Daempfung, aber kann traege machen.
+    # =========================================================================
     Kp: [1.8, 0.0, 0.0,
          0.0, 1.8, 0.0,
          0.0, 0.0, 1.8]
@@ -33,26 +48,89 @@ motor_move:
          0.0, 0.2, 0.0,
          0.0, 0.0, 0.2]
 
-    # --- Regelparameter ---
-    loop_rate: 15.0               # Regelfrequenz [Hz]
-    timeout_seconds: 10.0         # Max. Fahrzeit pro Goal [s]
-    yaw_tolerance_degrees: 5.0    # Winkelfehler-Toleranz [°]
-    distance_tolerance: 0.05      # Positionsfehler-Toleranz [m]
+    # =========================================================================
+    # P-Term Limits
+    # =========================================================================
+    # Begrenzt den Proportional-Anteil der Ausgabe, damit der Roboter
+    # nicht zu schnell faehrt, selbst wenn der Fehler gross ist.
+    #
+    # p_max_linear:  Max. Geschwindigkeit durch P-Anteil [m/s]
+    # p_max_angular: Max. Drehgeschwindigkeit durch P-Anteil [rad/s]
+    # =========================================================================
+    p_max_linear: 0.4
+    p_max_angular: 1.0
 
-    # --- Live Tuning ---
-    # Nur für Tuning-Sessions aktivieren!
-    # Im Normalbetrieb auf false lassen.
+    # =========================================================================
+    # Regelparameter
+    # =========================================================================
+    # loop_rate:             Wie oft pro Sekunde der Regler rechnet [Hz]
+    # timeout_seconds:       Maximale Zeit fuer ein Goal, danach Abbruch [s]
+    # yaw_tolerance_degrees: Winkelfehler ab dem das Ziel als erreicht gilt [Grad]
+    # distance_tolerance:    Positionsfehler ab dem das Ziel als erreicht gilt [m]
+    # =========================================================================
+    loop_rate: 15.0
+    timeout_seconds: 10.0
+    yaw_tolerance_degrees: 2.0
+    distance_tolerance: 0.02
+
+    # =========================================================================
+    # Feedforward (Vorsteuerung / Motion Profile)
+    # =========================================================================
+    # Berechnet eine Soll-Geschwindigkeit basierend auf der Entfernung
+    # zum Ziel (Trapezprofil mit Bremskurve). Der Roboter faehrt damit
+    # vorausschauend los und bremst sanft ab, statt nur auf den Fehler
+    # zu reagieren. Ergebnis: schnellere und glattere Bewegung.
+    #
+    # enable_feedforward:        Vorsteuerung ein/aus
+    # max_linear_velocity:       Max. Fahrgeschwindigkeit [m/s]
+    # max_linear_acceleration:   Max. Beschleunigung linear [m/s^2]
+    # max_angular_velocity:      Max. Drehgeschwindigkeit [rad/s]
+    # max_angular_acceleration:  Max. Beschleunigung Drehung [rad/s^2]
+    # =========================================================================
+    enable_feedforward: true
+    max_linear_velocity: 0.5
+    max_linear_acceleration: 0.5
+    max_angular_velocity: 1.0
+    max_angular_acceleration: 1.0
+
+    # =========================================================================
+    # Decoupling (Entkopplung)
+    # =========================================================================
+    # Kompensiert Quereffekte zwischen den Achsen. Bei manchen Robotern
+    # beeinflusst z.B. eine X-Bewegung auch die Y-Achse. Die Entkopplungs-
+    # matrix korrigiert das. Im Normalfall (Einheitsmatrix) passiert nichts.
+    #
+    # enable_decoupling:  Entkopplung ein/aus
+    # decoupling_matrix:  3x3 Kompensationsmatrix (zeilenweise)
+    # =========================================================================
+    enable_decoupling: false
+    decoupling_matrix: [1.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                        0.0, 0.0, 1.0]
+
+    # =========================================================================
+    # Live Tuning
+    # =========================================================================
+    # Erlaubt es, PID-Gains und andere Parameter zur Laufzeit zu aendern
+    # mit "ros2 param set". Nur fuer Tuning-Sessions aktivieren!
+    # Im Normalbetrieb auf false lassen (spart Rechenzeit).
+    # =========================================================================
     enable_live_tuning: false
 
-    # --- PID Tuning Logging ---
-    # Aktiviert CSV-Logging aller PID-Daten für Analyse
-    # CSV wird in tuning_log_path/<timestamp>/pid_data.csv gespeichert
+    # =========================================================================
+    # PID Tuning Logging
+    # =========================================================================
+    # Speichert alle Reglerdaten (Fehler, P/I/D-Anteile, Feedforward,
+    # cmd_vel) in eine CSV-Datei zur Analyse und zum Plotten.
+    # Pfad: tuning_log_path/<timestamp>/pid_data.csv
+    #
+    # enable_tuning_log:    CSV-Logging ein/aus
+    # tuning_log_path:      Ordner in dem die Logs gespeichert werden
+    # tuning_remote_target: Wenn gesetzt, wird die CSV nach dem Experiment
+    #                       automatisch per SCP uebertragen.
+    #                       Format: "user@host:/pfad/zum/zielordner"
+    #                       Voraussetzung: SSH-Key-Auth vom Roboter zum Ziel-PC
+    # =========================================================================
     enable_tuning_log: false
     tuning_log_path: "/home/robotino/ros2/robotino_navigation_ws/src/motor-move/tuning_logs"
-
-    # Remote Transfer (optional)
-    # Wenn gesetzt, wird die CSV nach Experiment-Ende automatisch per SCP übertragen
-    # Format: "user@host:/pfad/zum/zielordner"
-    # Beispiel: "sam@192.168.1.100:/home/sam/ros2/pid_tuning"
-    # Voraussetzung: SSH-Key-Authentifizierung von rb3 zum Ziel-PC
     tuning_remote_target: ""

@@ -1,17 +1,31 @@
+// Copyright (c) 2026 Carologistics
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include <algorithm>
 // Licensed under MIT. See LICENSE file. Copyright Carologistics.
 
 #include "motor_move/motor_move.hpp"
-#include <eigen3/Eigen/src/Core/Matrix.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include "tf2/utils.h"
-#include <cmath>
-#include <rcl_interfaces/msg/set_parameters_result.hpp>
-#include <filesystem>
 #include <chrono>
-#include <iomanip>
-#include <sstream>
+#include <cmath>
 #include <cstdlib>
+#include <eigen3/Eigen/src/Core/Matrix.h>
+#include <filesystem>
+#include <iomanip>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
+#include <sstream>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace motor_move {
 
@@ -64,7 +78,8 @@ void MotorMove::init_tuning_logging() {
   try {
     std::filesystem::create_directories(dir_path);
   } catch (const std::exception &e) {
-    RCLCPP_ERROR(this->get_logger(), "Failed to create tuning log directory: %s", e.what());
+    RCLCPP_ERROR(this->get_logger(),
+                 "Failed to create tuning log directory: %s", e.what());
     logging_active_ = false;
     return;
   }
@@ -73,7 +88,8 @@ void MotorMove::init_tuning_logging() {
   csv_file_.open(csv_path);
 
   if (!csv_file_.is_open()) {
-    RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", csv_path.c_str());
+    RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s",
+                 csv_path.c_str());
     logging_active_ = false;
     return;
   }
@@ -87,26 +103,25 @@ void MotorMove::init_tuning_logging() {
   csv_file_.flush();
 
   logging_active_ = true;
-  RCLCPP_INFO(this->get_logger(), "[PID TUNING] Logging started: %s", csv_path.c_str());
+  RCLCPP_INFO(this->get_logger(), "[PID TUNING] Logging started: %s",
+              csv_path.c_str());
 }
 
-void MotorMove::log_pid_data(double timestamp,
-                              double error_x, double error_y, double error_yaw,
-                              double cmd_vel_x, double cmd_vel_y, double cmd_vel_yaw,
-                              double target_x, double target_y, double target_yaw,
-                              double ff_vel_x, double ff_vel_y, double ff_vel_yaw,
-                              double pid_vel_x, double pid_vel_y, double pid_vel_yaw) {
+void MotorMove::log_pid_data(
+    double timestamp, double error_x, double error_y, double error_yaw,
+    double cmd_vel_x, double cmd_vel_y, double cmd_vel_yaw, double target_x,
+    double target_y, double target_yaw, double ff_vel_x, double ff_vel_y,
+    double ff_vel_yaw, double pid_vel_x, double pid_vel_y, double pid_vel_yaw) {
   if (!logging_active_ || !csv_file_.is_open()) {
     return;
   }
 
-  csv_file_ << std::fixed << std::setprecision(6)
-            << timestamp << ","
-            << error_x << "," << error_y << "," << error_yaw << ","
-            << cmd_vel_x << "," << cmd_vel_y << "," << cmd_vel_yaw << ","
-            << target_x << "," << target_y << "," << target_yaw << ","
-            << ff_vel_x << "," << ff_vel_y << "," << ff_vel_yaw << ","
-            << pid_vel_x << "," << pid_vel_y << "," << pid_vel_yaw << "\n";
+  csv_file_ << std::fixed << std::setprecision(6) << timestamp << "," << error_x
+            << "," << error_y << "," << error_yaw << "," << cmd_vel_x << ","
+            << cmd_vel_y << "," << cmd_vel_yaw << "," << target_x << ","
+            << target_y << "," << target_yaw << "," << ff_vel_x << ","
+            << ff_vel_y << "," << ff_vel_yaw << "," << pid_vel_x << ","
+            << pid_vel_y << "," << pid_vel_yaw << "\n";
 }
 
 void MotorMove::generate_plot() {
@@ -114,18 +129,22 @@ void MotorMove::generate_plot() {
   std::string csv_path = local_dir + "/pid_data.csv";
   std::string png_path = local_dir + "/pid_analysis.png";
 
-  std::string script_path = "/home/robotino/ros2/robotino_navigation_ws/src/motor-move/motor_move/scripts/plot_pid_data.py";
+  std::string script_path = "/home/robotino/ros2/robotino_navigation_ws/src/"
+                            "motor-move/motor_move/scripts/plot_pid_data.py";
 
-  std::string plot_cmd = "python3 " + script_path + " " + csv_path + " " + png_path + " 2>/dev/null";
+  std::string plot_cmd = "python3 " + script_path + " " + csv_path + " " +
+                         png_path + " 2>/dev/null";
 
   RCLCPP_INFO(this->get_logger(), "[PID TUNING] Generating plot...");
 
   int result = std::system(plot_cmd.c_str());
 
   if (result == 0) {
-    RCLCPP_INFO(this->get_logger(), "[PID TUNING] Plot saved: %s", png_path.c_str());
+    RCLCPP_INFO(this->get_logger(), "[PID TUNING] Plot saved: %s",
+                png_path.c_str());
   } else {
-    RCLCPP_WARN(this->get_logger(), "[PID TUNING] Plot generation failed (exit code: %d)", result);
+    RCLCPP_WARN(this->get_logger(),
+                "[PID TUNING] Plot generation failed (exit code: %d)", result);
   }
 }
 
@@ -138,7 +157,9 @@ void MotorMove::transfer_to_remote() {
 
   size_t colon_pos = tuning_remote_target_.find(':');
   if (colon_pos == std::string::npos) {
-    RCLCPP_ERROR(this->get_logger(), "[PID TUNING] Invalid remote target format: %s (expected user@host:/path)",
+    RCLCPP_ERROR(this->get_logger(),
+                 "[PID TUNING] Invalid remote target format: %s (expected "
+                 "user@host:/path)",
                  tuning_remote_target_.c_str());
     return;
   }
@@ -147,26 +168,33 @@ void MotorMove::transfer_to_remote() {
   std::string remote_base_path = tuning_remote_target_.substr(colon_pos + 1);
   std::string remote_full_path = remote_base_path + "/" + experiment_timestamp_;
 
-  std::string mkdir_cmd = "ssh -o ConnectTimeout=5 -o BatchMode=yes " + user_host + " 'mkdir -p " + remote_full_path + "' 2>/dev/null";
+  std::string mkdir_cmd = "ssh -o ConnectTimeout=5 -o BatchMode=yes " +
+                          user_host + " 'mkdir -p " + remote_full_path +
+                          "' 2>/dev/null";
   int mkdir_result = std::system(mkdir_cmd.c_str());
 
   if (mkdir_result != 0) {
-    RCLCPP_WARN(this->get_logger(), "[PID TUNING] Failed to create remote directory (exit code: %d). Trying scp anyway...",
+    RCLCPP_WARN(this->get_logger(),
+                "[PID TUNING] Failed to create remote directory (exit code: "
+                "%d). Trying scp anyway...",
                 mkdir_result);
   }
 
   std::string scp_cmd = "scp -o ConnectTimeout=5 -o BatchMode=yes -r " +
-                        local_dir + "/* " +
-                        user_host + ":" + remote_full_path + "/ 2>/dev/null &";
+                        local_dir + "/* " + user_host + ":" + remote_full_path +
+                        "/ 2>/dev/null &";
 
-  RCLCPP_INFO(this->get_logger(), "[PID TUNING] Transferring to remote: %s:%s", user_host.c_str(), remote_full_path.c_str());
+  RCLCPP_INFO(this->get_logger(), "[PID TUNING] Transferring to remote: %s:%s",
+              user_host.c_str(), remote_full_path.c_str());
 
   int result = std::system(scp_cmd.c_str());
 
   if (result == 0) {
-    RCLCPP_INFO(this->get_logger(), "[PID TUNING] Transfer initiated (CSV + PNG)");
+    RCLCPP_INFO(this->get_logger(),
+                "[PID TUNING] Transfer initiated (CSV + PNG)");
   } else {
-    RCLCPP_WARN(this->get_logger(), "[PID TUNING] SCP command returned non-zero. Check SSH key authentication.");
+    RCLCPP_WARN(this->get_logger(), "[PID TUNING] SCP command returned "
+                                    "non-zero. Check SSH key authentication.");
   }
 }
 
@@ -178,7 +206,8 @@ void MotorMove::finalize_tuning_logging() {
   if (csv_file_.is_open()) {
     csv_file_.flush();
     csv_file_.close();
-    RCLCPP_INFO(this->get_logger(), "[PID TUNING] Logging finished: %s/%s/pid_data.csv",
+    RCLCPP_INFO(this->get_logger(),
+                "[PID TUNING] Logging finished: %s/%s/pid_data.csv",
                 tuning_log_path_.c_str(), experiment_timestamp_.c_str());
   }
 
@@ -210,7 +239,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   base_frame_ = base_frame;
   odom_frame_ = odom_frame;
   RCLCPP_INFO(this->get_logger(), "Namespace: %s", namespace_.c_str());
-  RCLCPP_INFO(this->get_logger(), "base_link frame id: %s", base_frame_.c_str());
+  RCLCPP_INFO(this->get_logger(), "base_link frame id: %s",
+              base_frame_.c_str());
   RCLCPP_INFO(this->get_logger(), "odom frame id: %s", odom_frame_.c_str());
 
   cmd_vel_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
@@ -224,9 +254,12 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
       std::bind(&MotorMove::handle_accepted, this, _1));
 
   // --- PID Gains ---
-  std::vector<double> default_Kp = {1.8, 0.0, 0.0, 0.0, 1.8, 0.0, 0.0, 0.0, 1.8};
-  std::vector<double> default_Ki = {0.38, 0.0, 0.0, 0.0, 0.38, 0.0, 0.0, 0.0, 0.38};
-  std::vector<double> default_Kd = {0.2, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.2};
+  std::vector<double> default_Kp = {1.8, 0.0, 0.0, 0.0, 1.8,
+                                    0.0, 0.0, 0.0, 1.8};
+  std::vector<double> default_Ki = {0.38, 0.0, 0.0, 0.0, 0.38,
+                                    0.0,  0.0, 0.0, 0.38};
+  std::vector<double> default_Kd = {0.2, 0.0, 0.0, 0.0, 0.2,
+                                    0.0, 0.0, 0.0, 0.2};
 
   this->declare_parameter("Kp", default_Kp);
   this->declare_parameter("Ki", default_Ki);
@@ -236,9 +269,12 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   Eigen::MatrixXd Ki_matrix = get_matrix_parameter("Ki", 3, 3);
   Eigen::MatrixXd Kd_matrix = get_matrix_parameter("Kd", 3, 3);
 
-  RCLCPP_INFO(this->get_logger(), "Kp:\n%s", matrix_to_string(Kp_matrix).c_str());
-  RCLCPP_INFO(this->get_logger(), "Ki:\n%s", matrix_to_string(Ki_matrix).c_str());
-  RCLCPP_INFO(this->get_logger(), "Kd:\n%s", matrix_to_string(Kd_matrix).c_str());
+  RCLCPP_INFO(this->get_logger(), "Kp:\n%s",
+              matrix_to_string(Kp_matrix).c_str());
+  RCLCPP_INFO(this->get_logger(), "Ki:\n%s",
+              matrix_to_string(Ki_matrix).c_str());
+  RCLCPP_INFO(this->get_logger(), "Kd:\n%s",
+              matrix_to_string(Kd_matrix).c_str());
 
   mimo_.set_Kp(Kp_matrix);
   mimo_.set_Ki(Ki_matrix);
@@ -253,8 +289,9 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   this->get_parameter("p_max_angular", p_max_ang);
   mimo_.set_p_term_limits(p_max_lin, p_max_ang);
 
-  RCLCPP_INFO(this->get_logger(), "P-term limits: linear=%.2f m/s, angular=%.2f rad/s",
-              p_max_lin, p_max_ang);
+  RCLCPP_INFO(this->get_logger(),
+              "P-term limits: linear=%.2f m/s, angular=%.2f rad/s", p_max_lin,
+              p_max_ang);
 
   // --- TF2 ---
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
@@ -276,7 +313,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(this->get_logger(), "  Loop rate: %f Hz", loop_rate_val);
   RCLCPP_INFO(this->get_logger(), "  Timeout: %f seconds", timeout_val);
   RCLCPP_INFO(this->get_logger(), "  Yaw tolerance: %f degrees", yaw_tol_val);
-  RCLCPP_INFO(this->get_logger(), "  Distance tolerance: %f meters", dist_tol_val);
+  RCLCPP_INFO(this->get_logger(), "  Distance tolerance: %f meters",
+              dist_tol_val);
 
   // =========================================================================
   // PID TUNING LOGGING PARAMETER
@@ -290,21 +328,23 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   this->get_parameter("tuning_remote_target", tuning_remote_target_);
 
   if (enable_tuning_log_) {
+    RCLCPP_WARN(this->get_logger(), "=== PID TUNING LOGGING ENABLED ===");
     RCLCPP_WARN(this->get_logger(),
-                "=== PID TUNING LOGGING ENABLED ===");
-    RCLCPP_WARN(this->get_logger(),
-                "CSV logs will be saved to: %s/<timestamp>/pid_data.csv", tuning_log_path_.c_str());
+                "CSV logs will be saved to: %s/<timestamp>/pid_data.csv",
+                tuning_log_path_.c_str());
 
     if (!tuning_remote_target_.empty()) {
       RCLCPP_WARN(this->get_logger(),
-                  "Remote transfer enabled: %s/<timestamp>/pid_data.csv", tuning_remote_target_.c_str());
+                  "Remote transfer enabled: %s/<timestamp>/pid_data.csv",
+                  tuning_remote_target_.c_str());
     }
   }
 
   // =========================================================================
   // DECOUPLING (Entkopplung)
   // =========================================================================
-  std::vector<double> default_decoupling = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  std::vector<double> default_decoupling = {1.0, 0.0, 0.0, 0.0, 1.0,
+                                            0.0, 0.0, 0.0, 1.0};
   this->declare_parameter("decoupling_matrix", default_decoupling);
   this->declare_parameter("enable_decoupling", false);
 
@@ -312,10 +352,9 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   decoupling_matrix_ = get_matrix_parameter("decoupling_matrix", 3, 3);
 
   if (enable_decoupling_) {
-    RCLCPP_WARN(this->get_logger(),
-                "=== DECOUPLING ENABLED ===");
-    RCLCPP_WARN(this->get_logger(),
-                "Decoupling matrix D:\n%s", matrix_to_string(decoupling_matrix_).c_str());
+    RCLCPP_WARN(this->get_logger(), "=== DECOUPLING ENABLED ===");
+    RCLCPP_WARN(this->get_logger(), "Decoupling matrix D:\n%s",
+                matrix_to_string(decoupling_matrix_).c_str());
   }
 
   // =========================================================================
@@ -334,17 +373,19 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   this->get_parameter("max_angular_acceleration", max_angular_acceleration_);
 
   if (enable_feedforward_) {
-    RCLCPP_WARN(this->get_logger(),
-                "=== FEEDFORWARD ENABLED ===");
-    RCLCPP_WARN(this->get_logger(),
-                "Motion profile: max_lin_vel=%.2f m/s, max_lin_accel=%.2f m/s^2",
-                max_linear_velocity_, max_linear_acceleration_);
-    RCLCPP_WARN(this->get_logger(),
-                "                max_ang_vel=%.2f rad/s, max_ang_accel=%.2f rad/s^2",
-                max_angular_velocity_, max_angular_acceleration_);
+    RCLCPP_WARN(this->get_logger(), "=== FEEDFORWARD ENABLED ===");
+    RCLCPP_WARN(
+        this->get_logger(),
+        "Motion profile: max_lin_vel=%.2f m/s, max_lin_accel=%.2f m/s^2",
+        max_linear_velocity_, max_linear_acceleration_);
+    RCLCPP_WARN(
+        this->get_logger(),
+        "                max_ang_vel=%.2f rad/s, max_ang_accel=%.2f rad/s^2",
+        max_angular_velocity_, max_angular_acceleration_);
   } else {
-    RCLCPP_INFO(this->get_logger(),
-                "Feedforward disabled. Use enable_feedforward:=true to enable.");
+    RCLCPP_INFO(
+        this->get_logger(),
+        "Feedforward disabled. Use enable_feedforward:=true to enable.");
   }
 
   // =========================================================================
@@ -355,18 +396,19 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   this->get_parameter("enable_live_tuning", live_tuning_enabled);
 
   if (live_tuning_enabled) {
-    RCLCPP_WARN(this->get_logger(),
-                "=== LIVE TUNING MODE ENABLED ===");
-    RCLCPP_WARN(this->get_logger(),
-                "PID gains, P-limits, feedforward params can be changed at runtime.");
-    RCLCPP_WARN(this->get_logger(),
-                "Use: ros2 param set <node> Kp \"[1.8, 0, 0, 0, 1.8, 0, 0, 0, 1.8]\"");
+    RCLCPP_WARN(this->get_logger(), "=== LIVE TUNING MODE ENABLED ===");
+    RCLCPP_WARN(
+        this->get_logger(),
+        "PID gains, P-limits, feedforward params can be changed at runtime.");
+    RCLCPP_WARN(
+        this->get_logger(),
+        "Use: ros2 param set <node> Kp \"[1.8, 0, 0, 0, 1.8, 0, 0, 0, 1.8]\"");
 
-    param_callback_handle_ = this->add_on_set_parameters_callback(
-        std::bind(&MotorMove::on_parameter_change, this, std::placeholders::_1));
+    param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
+        &MotorMove::on_parameter_change, this, std::placeholders::_1));
   } else {
-    RCLCPP_INFO(this->get_logger(),
-                "Live tuning disabled. Launch with enable_live_tuning:=true to enable.");
+    RCLCPP_INFO(this->get_logger(), "Live tuning disabled. Launch with "
+                                    "enable_live_tuning:=true to enable.");
   }
 }
 
@@ -374,8 +416,7 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
 // PARAMETER CHANGE CALLBACK (Live Tuning)
 // =============================================================================
 
-rcl_interfaces::msg::SetParametersResult
-MotorMove::on_parameter_change(
+rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
     const std::vector<rclcpp::Parameter> &parameters) {
 
   rcl_interfaces::msg::SetParametersResult result;
@@ -389,7 +430,8 @@ MotorMove::on_parameter_change(
       if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
         result.successful = false;
         result.reason = name + " must be a double array";
-        RCLCPP_ERROR(this->get_logger(), "Invalid type for %s: expected double array",
+        RCLCPP_ERROR(this->get_logger(),
+                     "Invalid type for %s: expected double array",
                      name.c_str());
         return result;
       }
@@ -398,14 +440,15 @@ MotorMove::on_parameter_change(
       if (values.size() != 9) {
         result.successful = false;
         result.reason = name + " must have exactly 9 elements (3x3 matrix)";
-        RCLCPP_ERROR(this->get_logger(), "Invalid size for %s: got %zu, expected 9",
-                     name.c_str(), values.size());
+        RCLCPP_ERROR(this->get_logger(),
+                     "Invalid size for %s: got %zu, expected 9", name.c_str(),
+                     values.size());
         return result;
       }
 
-      Eigen::MatrixXd matrix = Eigen::Map<
-          Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
-          values.data(), 3, 3);
+      Eigen::MatrixXd matrix =
+          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                                   Eigen::RowMajor>>(values.data(), 3, 3);
 
       {
         std::lock_guard lock{target_pose_mutex_};
@@ -419,7 +462,7 @@ MotorMove::on_parameter_change(
       }
 
       RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] %s updated to:\n%s",
-                   name.c_str(), matrix_to_string(matrix).c_str());
+                  name.c_str(), matrix_to_string(matrix).c_str());
     }
 
     // --- P-Term Limits ---
@@ -435,26 +478,28 @@ MotorMove::on_parameter_change(
         double p_lin, p_ang;
         this->get_parameter("p_max_linear", p_lin);
         this->get_parameter("p_max_angular", p_ang);
-        if (name == "p_max_linear") p_lin = val;
-        if (name == "p_max_angular") p_ang = val;
+        if (name == "p_max_linear")
+          p_lin = val;
+        if (name == "p_max_angular")
+          p_ang = val;
         mimo_.set_p_term_limits(p_lin, p_ang);
       }
       RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] %s updated to: %f",
-                   name.c_str(), val);
+                  name.c_str(), val);
     }
 
     // --- Control parameters ---
     if (name == "loop_rate" || name == "timeout_seconds" ||
         name == "yaw_tolerance_degrees" || name == "distance_tolerance") {
       RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] %s updated to: %f",
-                   name.c_str(), param.as_double());
+                  name.c_str(), param.as_double());
     }
 
     // --- Decoupling ---
     if (name == "enable_decoupling") {
       enable_decoupling_ = param.as_bool();
       RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] Decoupling %s",
-                   enable_decoupling_ ? "ENABLED" : "DISABLED");
+                  enable_decoupling_ ? "ENABLED" : "DISABLED");
     }
 
     if (name == "decoupling_matrix") {
@@ -469,47 +514,55 @@ MotorMove::on_parameter_change(
         result.reason = "decoupling_matrix must have exactly 9 elements (3x3)";
         return result;
       }
-      Eigen::MatrixXd matrix = Eigen::Map<
-          Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
-          values.data(), 3, 3);
+      Eigen::MatrixXd matrix =
+          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                                   Eigen::RowMajor>>(values.data(), 3, 3);
       {
         std::lock_guard lock{target_pose_mutex_};
         decoupling_matrix_ = matrix;
       }
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] Decoupling matrix updated to:\n%s",
-                   matrix_to_string(matrix).c_str());
+      RCLCPP_WARN(this->get_logger(),
+                  "[LIVE TUNING] Decoupling matrix updated to:\n%s",
+                  matrix_to_string(matrix).c_str());
     }
 
     // --- Feedforward ---
     if (name == "enable_feedforward") {
       enable_feedforward_ = param.as_bool();
       RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] Feedforward %s",
-                   enable_feedforward_ ? "ENABLED" : "DISABLED");
+                  enable_feedforward_ ? "ENABLED" : "DISABLED");
     }
 
     if (name == "max_linear_velocity") {
       max_linear_velocity_ = param.as_double();
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] max_linear_velocity = %f", max_linear_velocity_);
+      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] max_linear_velocity = %f",
+                  max_linear_velocity_);
     }
     if (name == "max_linear_acceleration") {
       max_linear_acceleration_ = param.as_double();
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] max_linear_acceleration = %f", max_linear_acceleration_);
+      RCLCPP_WARN(this->get_logger(),
+                  "[LIVE TUNING] max_linear_acceleration = %f",
+                  max_linear_acceleration_);
     }
     if (name == "max_angular_velocity") {
       max_angular_velocity_ = param.as_double();
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] max_angular_velocity = %f", max_angular_velocity_);
+      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] max_angular_velocity = %f",
+                  max_angular_velocity_);
     }
     if (name == "max_angular_acceleration") {
       max_angular_acceleration_ = param.as_double();
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] max_angular_acceleration = %f", max_angular_acceleration_);
+      RCLCPP_WARN(this->get_logger(),
+                  "[LIVE TUNING] max_angular_acceleration = %f",
+                  max_angular_acceleration_);
     }
 
     // --- enable_live_tuning cannot be changed at runtime ---
     if (name == "enable_live_tuning") {
       result.successful = false;
       result.reason = "enable_live_tuning can only be set at launch time";
-      RCLCPP_WARN(this->get_logger(),
-                  "Cannot change enable_live_tuning at runtime. Restart the node.");
+      RCLCPP_WARN(
+          this->get_logger(),
+          "Cannot change enable_live_tuning at runtime. Restart the node.");
       return result;
     }
   }
@@ -518,9 +571,7 @@ MotorMove::on_parameter_change(
 }
 
 // Destruktor
-MotorMove::~MotorMove() {
-  finalize_tuning_logging();
-}
+MotorMove::~MotorMove() { finalize_tuning_logging(); }
 
 // =============================================================================
 // KOORDINATENTRANSFORMATION
@@ -605,7 +656,8 @@ void MotorMove::execute(
   this->get_parameter("yaw_tolerance_degrees", yaw_tolerance_degrees);
   this->get_parameter("distance_tolerance", distance_tolerance);
 
-  // Read feedforward params fresh from parameter server (works without live tuning)
+  // Read feedforward params fresh from parameter server (works without live
+  // tuning)
   this->get_parameter("enable_feedforward", enable_feedforward_);
   this->get_parameter("max_linear_velocity", max_linear_velocity_);
   this->get_parameter("max_linear_acceleration", max_linear_acceleration_);
@@ -630,7 +682,8 @@ void MotorMove::execute(
     mimo_.set_p_term_limits(p_max_lin, p_max_ang);
   }
 
-  rclcpp::Duration timeout_duration = rclcpp::Duration::from_seconds(timeout_seconds);
+  rclcpp::Duration timeout_duration =
+      rclcpp::Duration::from_seconds(timeout_seconds);
   const double YAW_TOLERANCE = yaw_tolerance_degrees * M_PI / 180.0;
   const double DISTANCE_TOLERANCE = distance_tolerance;
 
@@ -656,7 +709,8 @@ void MotorMove::execute(
 
   if (enable_feedforward_) {
     RCLCPP_INFO(this->get_logger(),
-                "[FF+PID] Feedforward active: max_vel=%.2f, max_accel=%.2f, max_ang_vel=%.2f, max_ang_accel=%.2f",
+                "[FF+PID] Feedforward active: max_vel=%.2f, max_accel=%.2f, "
+                "max_ang_vel=%.2f, max_ang_accel=%.2f",
                 max_linear_velocity_, max_linear_acceleration_,
                 max_angular_velocity_, max_angular_acceleration_);
   }
@@ -684,7 +738,8 @@ void MotorMove::execute(
 
       result->success = false;
       goal_handle->abort(result);
-      RCLCPP_WARN(this->get_logger(), "Goal timed out after %f seconds", timeout_seconds);
+      RCLCPP_WARN(this->get_logger(), "Goal timed out after %f seconds",
+                  timeout_seconds);
       RCLCPP_INFO(this->get_logger(), "Distance to target: %f", distance);
       finalize_tuning_logging();
       return;
@@ -699,19 +754,22 @@ void MotorMove::execute(
     float yaw = std::abs(tf2::getYaw(error.pose.orientation));
 
     if (yaw > YAW_TOLERANCE || distance > DISTANCE_TOLERANCE) {
-      RCLCPP_INFO(this->get_logger(), "Distance to target: %f, Yaw error: %f (tolerance: %f)",
+      RCLCPP_INFO(this->get_logger(),
+                  "Distance to target: %f, Yaw error: %f (tolerance: %f)",
                   distance, yaw, YAW_TOLERANCE);
 
       rclcpp::Duration delta_t = current_time - previous_time;
       double dt = delta_t.seconds();
       if (dt <= 0.0 || dt > 1.0) {
         dt = 1.0 / loop_rate_hz;
-        RCLCPP_WARN(this->get_logger(), "Invalid delta_t, using expected loop time: %f", dt);
+        RCLCPP_WARN(this->get_logger(),
+                    "Invalid delta_t, using expected loop time: %f", dt);
       }
 
       RCLCPP_INFO(this->get_logger(), "Time delta %f", dt);
       Eigen::MatrixXd error_matrix(3, 1);
-      error_matrix << error.pose.position.x, error.pose.position.y, tf2::getYaw(error.pose.orientation);
+      error_matrix << error.pose.position.x, error.pose.position.y,
+          tf2::getYaw(error.pose.orientation);
 
       // =====================================================================
       // FEEDFORWARD: Compute velocity from motion profile
@@ -721,14 +779,13 @@ void MotorMove::execute(
       if (enable_feedforward_) {
         // Linear: combined 2D profile (shared magnitude, split into X/Y)
         MotionProfile::compute_linear_velocity(
-            error_matrix(0, 0), error_matrix(1, 0),
-            max_linear_velocity_, max_linear_acceleration_,
-            v_ff_x, v_ff_y);
+            error_matrix(0, 0), error_matrix(1, 0), max_linear_velocity_,
+            max_linear_acceleration_, v_ff_x, v_ff_y);
 
         // Angular: independent 1D profile
-        v_ff_yaw = MotionProfile::compute_velocity(
-            error_matrix(2, 0),
-            max_angular_velocity_, max_angular_acceleration_);
+        v_ff_yaw = MotionProfile::compute_velocity(error_matrix(2, 0),
+                                                   max_angular_velocity_,
+                                                   max_angular_acceleration_);
 
         RCLCPP_INFO(this->get_logger(), "Feedforward - x: %f, y: %f, yaw: %f",
                     v_ff_x, v_ff_y, v_ff_yaw);
@@ -738,30 +795,35 @@ void MotorMove::execute(
       // PID: Feedback correction
       // =====================================================================
 
-      // Get current robot position in odom frame (for Derivative on Measurement)
+      // Get current robot position in odom frame (for Derivative on
+      // Measurement)
       geometry_msgs::msg::TransformStamped current_tf;
       try {
-        current_tf = tf_buffer_->lookupTransform(odom_frame_, base_frame_, tf2::TimePointZero);
+        current_tf = tf_buffer_->lookupTransform(odom_frame_, base_frame_,
+                                                 tf2::TimePointZero);
       } catch (const tf2::TransformException &ex) {
-        RCLCPP_WARN(this->get_logger(), "Could not get current position: %s", ex.what());
+        RCLCPP_WARN(this->get_logger(), "Could not get current position: %s",
+                    ex.what());
         loop_rate.sleep();
         continue;
       }
 
       Eigen::MatrixXd position_matrix(3, 1);
       position_matrix << current_tf.transform.translation.x,
-                         current_tf.transform.translation.y,
-                         tf2::getYaw(current_tf.transform.rotation);
+          current_tf.transform.translation.y,
+          tf2::getYaw(current_tf.transform.rotation);
 
       // Apply decoupling if enabled (only affects PID input, not feedforward)
       Eigen::MatrixXd pid_input = error_matrix;
       if (enable_decoupling_) {
         pid_input = decoupling_matrix_ * error_matrix;
-        RCLCPP_DEBUG(this->get_logger(), "Decoupled error - x: %f, y: %f, yaw: %f",
-                    pid_input(0, 0), pid_input(1, 0), pid_input(2, 0));
+        RCLCPP_DEBUG(this->get_logger(),
+                     "Decoupled error - x: %f, y: %f, yaw: %f", pid_input(0, 0),
+                     pid_input(1, 0), pid_input(2, 0));
       }
 
-      Eigen::MatrixXd pid_output = mimo_.compute(pid_input, position_matrix, dt);
+      Eigen::MatrixXd pid_output =
+          mimo_.compute(pid_input, position_matrix, dt);
 
       RCLCPP_INFO(this->get_logger(), "Error matrix - x: %f, y: %f, yaw: %f",
                   error_matrix(0, 0), error_matrix(1, 0), error_matrix(2, 0));
@@ -777,7 +839,9 @@ void MotorMove::execute(
       cmd_vel.angular.z = v_ff_yaw + pid_output(2, 0);
 
       if (enable_feedforward_) {
-        RCLCPP_INFO(this->get_logger(), "Combined cmd_vel - x: %f (ff=%f + pid=%f), y: %f (ff=%f + pid=%f), yaw: %f (ff=%f + pid=%f)",
+        RCLCPP_INFO(this->get_logger(),
+                    "Combined cmd_vel - x: %f (ff=%f + pid=%f), y: %f (ff=%f + "
+                    "pid=%f), yaw: %f (ff=%f + pid=%f)",
                     cmd_vel.linear.x, v_ff_x, pid_output(0, 0),
                     cmd_vel.linear.y, v_ff_y, pid_output(1, 0),
                     cmd_vel.angular.z, v_ff_yaw, pid_output(2, 0));
@@ -787,12 +851,11 @@ void MotorMove::execute(
 
       // PID Tuning Logging (with feedforward breakdown)
       double timestamp = (current_time - start_time).seconds();
-      log_pid_data(timestamp,
-                   error_matrix(0, 0), error_matrix(1, 0), error_matrix(2, 0),
-                   cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z,
-                   target_x, target_y, target_yaw,
-                   v_ff_x, v_ff_y, v_ff_yaw,
-                   pid_output(0, 0), pid_output(1, 0), pid_output(2, 0));
+      log_pid_data(timestamp, error_matrix(0, 0), error_matrix(1, 0),
+                   error_matrix(2, 0), cmd_vel.linear.x, cmd_vel.linear.y,
+                   cmd_vel.angular.z, target_x, target_y, target_yaw, v_ff_x,
+                   v_ff_y, v_ff_yaw, pid_output(0, 0), pid_output(1, 0),
+                   pid_output(2, 0));
 
       previous_time = current_time;
     } else {
@@ -806,12 +869,13 @@ void MotorMove::execute(
       result->success = true;
       goal_handle->succeed(result);
       RCLCPP_INFO(this->get_logger(),
-                  "Ziel erreicht - Toleranz erfüllt (Yaw: %f <= %f, Distance: %f <= %f)",
+                  "Ziel erreicht - Toleranz erfüllt (Yaw: %f <= %f, Distance: "
+                  "%f <= %f)",
                   yaw, YAW_TOLERANCE, distance, DISTANCE_TOLERANCE);
       RCLCPP_INFO(this->get_logger(), "Distance to target: %f", distance);
       RCLCPP_INFO(this->get_logger(), "Yaw to target: %f", yaw);
-      RCLCPP_INFO(this->get_logger(), "Delta x: %f y: %f", error.pose.position.x,
-                  error.pose.position.y);
+      RCLCPP_INFO(this->get_logger(), "Delta x: %f y: %f",
+                  error.pose.position.x, error.pose.position.y);
       finalize_tuning_logging();
       return;
     }
