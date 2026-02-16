@@ -297,7 +297,7 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
               p_max_ang);
 
   // --- D-Term Low-Pass Filter ---
-  this->declare_parameter("d_filter_alpha", 0.3);
+  this->declare_parameter("d_filter_alpha", 0.1);
   double d_alpha;
   this->get_parameter("d_filter_alpha", d_alpha);
   mimo_.set_d_filter_alpha(d_alpha);

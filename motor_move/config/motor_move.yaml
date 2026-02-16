@@ -63,7 +63,7 @@
     # d_filter_alpha: EMA-Tiefpassfilter auf dem D-Term (0.0..1.0)
     #   1.0 = kein Filter (roh), 0.1 = stark gefiltert
     #   Empfohlen: 0.2-0.4 bei 15 Hz Loop-Rate
-    d_filter_alpha: 0.3
+    d_filter_alpha: 0.1
 
     # =========================================================================
     # Regelparameter
