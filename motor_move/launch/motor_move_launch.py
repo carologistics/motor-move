@@ -24,8 +24,15 @@ from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
+    # Use source YAML directly so changes take effect without rebuild
     package_dir = get_package_share_directory("motor_move")
-    config = os.path.join(package_dir, "config", "motor_move.yaml")
+    source_config = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "config",
+        "motor_move.yaml",
+    )
+    install_config = os.path.join(package_dir, "config", "motor_move.yaml")
+    config = source_config if os.path.exists(source_config) else install_config
 
     # Launch configurations
     use_sim_time = LaunchConfiguration("use_sim_time")
