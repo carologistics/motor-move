@@ -19,74 +19,107 @@
 #include <cmath>
 
 /**
- * Trapezoidal motion profile for feedforward velocity generation.
+ * Time-based trapezoidal motion profile for trajectory generation.
  *
- * Computes desired velocity based on remaining distance to goal:
- * - Far from goal: max velocity (cruise phase)
- * - Near goal: braking curve v = sqrt(2 * a * d)
- * - At goal: zero
+ * Given a total distance, max velocity, and max acceleration, generates
+ * a trapezoidal (or triangular) velocity profile over time.
  *
- * For omnidirectional robots: linear X/Y are combined into a single
- * 2D profile (shared magnitude), yaw is independent.
+ * At each time step, returns the reference position (distance traveled)
+ * and reference velocity. This enables the PID to track intermediate
+ * setpoints rather than the final goal, keeping tracking errors small.
+ *
+ * Phases:
+ *   1. Acceleration: 0 -> peak_vel
+ *   2. Cruise: peak_vel (only if distance is large enough)
+ *   3. Deceleration: peak_vel -> 0
  */
-class MotionProfile {
+class TrajectoryProfile {
 public:
-  /**
-   * Compute feedforward velocity for a single axis (e.g. yaw).
-   *
-   * @param distance  Signed distance to goal
-   * @param max_vel   Maximum velocity (positive)
-   * @param max_decel Maximum deceleration for braking (positive)
-   * @return Signed velocity toward goal
-   */
-  static double compute_velocity(double distance, double max_vel,
-                                 double max_decel) {
-    double abs_dist = std::fabs(distance);
+  struct State {
+    double position; // distance traveled along profile [m or rad]
+    double velocity; // profile velocity at this time [m/s or rad/s]
+  };
 
-    if (abs_dist < 1e-6) {
-      return 0.0;
-    }
+  TrajectoryProfile() = default;
 
-    // Braking curve: velocity needed to stop at goal with max deceleration
-    double v_brake = std::sqrt(2.0 * max_decel * abs_dist);
+  void configure(double total_distance, double max_vel, double max_accel) {
+    distance_ = std::fabs(total_distance);
+    max_vel_ = max_vel;
+    max_accel_ = max_accel;
 
-    // Target velocity is minimum of max vel and braking vel
-    double v_target = std::min(max_vel, v_brake);
-
-    return std::copysign(v_target, distance);
-  }
-
-  /**
-   * Compute feedforward velocities for 2D linear motion.
-   * Uses total distance for profile magnitude, then splits into X/Y components.
-   * This ensures the robot follows a straight-line path to the goal.
-   *
-   * @param error_x   X component of error (in base_frame)
-   * @param error_y   Y component of error (in base_frame)
-   * @param max_vel   Maximum linear velocity
-   * @param max_decel Maximum linear deceleration
-   * @param[out] vx   Output X velocity
-   * @param[out] vy   Output Y velocity
-   */
-  static void compute_linear_velocity(double error_x, double error_y,
-                                      double max_vel, double max_decel,
-                                      double &vx, double &vy) {
-    double distance = std::sqrt(error_x * error_x + error_y * error_y);
-
-    if (distance < 1e-4) {
-      vx = 0.0;
-      vy = 0.0;
+    if (distance_ < 1e-6) {
+      accel_time_ = 0.0;
+      cruise_time_ = 0.0;
+      total_time_ = 0.0;
+      peak_vel_ = 0.0;
       return;
     }
 
-    // Profile velocity magnitude based on total distance
-    double v_brake = std::sqrt(2.0 * max_decel * distance);
-    double v_magnitude = std::min(max_vel, v_brake);
+    // Distance needed to accelerate to max_vel and decelerate back to 0
+    double d_to_max = max_vel_ * max_vel_ / (2.0 * max_accel_);
 
-    // Split into X/Y components (unit vector toward goal)
-    vx = v_magnitude * (error_x / distance);
-    vy = v_magnitude * (error_y / distance);
+    if (distance_ < 2.0 * d_to_max) {
+      // Triangular profile: never reaches max_vel
+      peak_vel_ = std::sqrt(max_accel_ * distance_);
+      accel_time_ = peak_vel_ / max_accel_;
+      cruise_time_ = 0.0;
+    } else {
+      // Trapezoidal profile: reaches max_vel
+      peak_vel_ = max_vel_;
+      accel_time_ = max_vel_ / max_accel_;
+      double d_accel = 0.5 * max_accel_ * accel_time_ * accel_time_;
+      cruise_time_ = (distance_ - 2.0 * d_accel) / max_vel_;
+    }
+    total_time_ = 2.0 * accel_time_ + cruise_time_;
   }
+
+  State compute(double t) const {
+    if (t <= 0.0 || total_time_ <= 0.0) {
+      return {0.0, 0.0};
+    }
+
+    if (t >= total_time_) {
+      return {distance_, 0.0};
+    }
+
+    double pos, vel;
+
+    if (t < accel_time_) {
+      // Acceleration phase
+      vel = max_accel_ * t;
+      pos = 0.5 * max_accel_ * t * t;
+    } else if (t < accel_time_ + cruise_time_) {
+      // Cruise phase
+      double t_cruise = t - accel_time_;
+      vel = peak_vel_;
+      double d_accel = 0.5 * max_accel_ * accel_time_ * accel_time_;
+      pos = d_accel + peak_vel_ * t_cruise;
+    } else {
+      // Deceleration phase
+      double t_decel = t - accel_time_ - cruise_time_;
+      vel = peak_vel_ - max_accel_ * t_decel;
+      if (vel < 0.0)
+        vel = 0.0;
+      double d_accel = 0.5 * max_accel_ * accel_time_ * accel_time_;
+      double d_cruise = peak_vel_ * cruise_time_;
+      pos = d_accel + d_cruise + peak_vel_ * t_decel -
+            0.5 * max_accel_ * t_decel * t_decel;
+    }
+
+    return {pos, vel};
+  }
+
+  double total_time() const { return total_time_; }
+  bool is_finished(double t) const { return t >= total_time_; }
+
+private:
+  double distance_ = 0.0;
+  double max_vel_ = 0.5;
+  double max_accel_ = 0.5;
+  double accel_time_ = 0.0;
+  double cruise_time_ = 0.0;
+  double total_time_ = 0.0;
+  double peak_vel_ = 0.0;
 };
 
 #endif // MOTION_PROFILE_HPP

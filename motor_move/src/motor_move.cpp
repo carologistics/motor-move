@@ -256,8 +256,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   // --- PID Gains ---
   std::vector<double> default_Kp = {1.8, 0.0, 0.0, 0.0, 1.8,
                                     0.0, 0.0, 0.0, 1.8};
-  std::vector<double> default_Ki = {0.38, 0.0, 0.0, 0.0, 0.38,
-                                    0.0,  0.0, 0.0, 0.38};
+  std::vector<double> default_Ki = {0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.0, 0.0, 0.0, 0.0};
   std::vector<double> default_Kd = {0.2, 0.0, 0.0, 0.0, 0.2,
                                     0.0, 0.0, 0.0, 0.2};
 
@@ -707,12 +707,62 @@ void MotorMove::execute(
     target_yaw = tf2::getYaw(target_pose_.pose.orientation);
   }
 
+  // =========================================================================
+  // TRAJECTORY SETUP (for feedforward mode)
+  // =========================================================================
+  double start_x = 0.0, start_y = 0.0, start_yaw = 0.0;
+  double direction_angle = 0.0;
+  double linear_distance = 0.0;
+  double angular_distance = 0.0;
+  TrajectoryProfile linear_profile, angular_profile;
+
   if (enable_feedforward_) {
+    // Get start position in odom frame
+    geometry_msgs::msg::TransformStamped start_tf;
+    try {
+      start_tf = tf_buffer_->lookupTransform(odom_frame_, base_frame_,
+                                             tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_ERROR(this->get_logger(), "Could not get start position: %s",
+                   ex.what());
+      result->success = false;
+      goal_handle->abort(result);
+      return;
+    }
+
+    start_x = start_tf.transform.translation.x;
+    start_y = start_tf.transform.translation.y;
+    start_yaw = tf2::getYaw(start_tf.transform.rotation);
+
+    // Compute trajectory in odom frame
+    double dx = target_x - start_x;
+    double dy = target_y - start_y;
+    angular_distance = target_yaw - start_yaw;
+
+    // Normalize angular distance to [-pi, pi]
+    while (angular_distance > M_PI)
+      angular_distance -= 2.0 * M_PI;
+    while (angular_distance < -M_PI)
+      angular_distance += 2.0 * M_PI;
+
+    linear_distance = std::sqrt(dx * dx + dy * dy);
+    direction_angle = std::atan2(dy, dx);
+
+    // Configure time-based profiles
+    linear_profile.configure(linear_distance, max_linear_velocity_,
+                             max_linear_acceleration_);
+    angular_profile.configure(std::fabs(angular_distance),
+                              max_angular_velocity_, max_angular_acceleration_);
+
     RCLCPP_INFO(this->get_logger(),
-                "[FF+PID] Feedforward active: max_vel=%.2f, max_accel=%.2f, "
-                "max_ang_vel=%.2f, max_ang_accel=%.2f",
-                max_linear_velocity_, max_linear_acceleration_,
-                max_angular_velocity_, max_angular_acceleration_);
+                "[TRAJECTORY] start=(%.3f, %.3f, %.3f) goal=(%.3f, %.3f, %.3f)",
+                start_x, start_y, start_yaw, target_x, target_y, target_yaw);
+    RCLCPP_INFO(this->get_logger(),
+                "[TRAJECTORY] Linear: %.3fm in %.2fs (peak %.2f m/s), "
+                "Angular: %.3frad in %.2fs",
+                linear_distance, linear_profile.total_time(),
+                max_linear_velocity_, angular_distance,
+                angular_profile.total_time());
   }
 
   while (rclcpp::ok()) {
@@ -772,31 +822,8 @@ void MotorMove::execute(
           tf2::getYaw(error.pose.orientation);
 
       // =====================================================================
-      // FEEDFORWARD: Compute velocity from motion profile
+      // Get current robot position in odom frame
       // =====================================================================
-      double v_ff_x = 0.0, v_ff_y = 0.0, v_ff_yaw = 0.0;
-
-      if (enable_feedforward_) {
-        // Linear: combined 2D profile (shared magnitude, split into X/Y)
-        MotionProfile::compute_linear_velocity(
-            error_matrix(0, 0), error_matrix(1, 0), max_linear_velocity_,
-            max_linear_acceleration_, v_ff_x, v_ff_y);
-
-        // Angular: independent 1D profile
-        v_ff_yaw = MotionProfile::compute_velocity(error_matrix(2, 0),
-                                                   max_angular_velocity_,
-                                                   max_angular_acceleration_);
-
-        RCLCPP_INFO(this->get_logger(), "Feedforward - x: %f, y: %f, yaw: %f",
-                    v_ff_x, v_ff_y, v_ff_yaw);
-      }
-
-      // =====================================================================
-      // PID: Feedback correction
-      // =====================================================================
-
-      // Get current robot position in odom frame (for Derivative on
-      // Measurement)
       geometry_msgs::msg::TransformStamped current_tf;
       try {
         current_tf = tf_buffer_->lookupTransform(odom_frame_, base_frame_,
@@ -808,54 +835,146 @@ void MotorMove::execute(
         continue;
       }
 
+      double cur_x = current_tf.transform.translation.x;
+      double cur_y = current_tf.transform.translation.y;
+      double cur_yaw = tf2::getYaw(current_tf.transform.rotation);
+
       Eigen::MatrixXd position_matrix(3, 1);
-      position_matrix << current_tf.transform.translation.x,
-          current_tf.transform.translation.y,
-          tf2::getYaw(current_tf.transform.rotation);
+      position_matrix << cur_x, cur_y, cur_yaw;
 
-      // Apply decoupling if enabled (only affects PID input, not feedforward)
-      Eigen::MatrixXd pid_input = error_matrix;
-      if (enable_decoupling_) {
-        pid_input = decoupling_matrix_ * error_matrix;
-        RCLCPP_DEBUG(this->get_logger(),
-                     "Decoupled error - x: %f, y: %f, yaw: %f", pid_input(0, 0),
-                     pid_input(1, 0), pid_input(2, 0));
-      }
-
-      Eigen::MatrixXd pid_output =
-          mimo_.compute(pid_input, position_matrix, dt);
-
-      RCLCPP_INFO(this->get_logger(), "Error matrix - x: %f, y: %f, yaw: %f",
-                  error_matrix(0, 0), error_matrix(1, 0), error_matrix(2, 0));
-      RCLCPP_INFO(this->get_logger(), "PID Output - x: %f, y: %f, yaw: %f",
-                  pid_output(0, 0), pid_output(1, 0), pid_output(2, 0));
-
-      // =====================================================================
-      // COMBINE: Feedforward + PID
-      // =====================================================================
+      double v_ff_x = 0.0, v_ff_y = 0.0, v_ff_yaw = 0.0;
+      double pid_out_x = 0.0, pid_out_y = 0.0, pid_out_yaw = 0.0;
+      double log_err_x, log_err_y, log_err_yaw;
       geometry_msgs::msg::Twist cmd_vel;
-      cmd_vel.linear.x = v_ff_x + pid_output(0, 0);
-      cmd_vel.linear.y = v_ff_y + pid_output(1, 0);
-      cmd_vel.angular.z = v_ff_yaw + pid_output(2, 0);
 
       if (enable_feedforward_) {
+        // ===================================================================
+        // TRAJECTORY-BASED FEEDFORWARD + TRACKING ERROR PID
+        // ===================================================================
+        double t = elapsed.seconds();
+        double yaw_sign = (angular_distance >= 0.0) ? 1.0 : -1.0;
+
+        // Reference from trajectory profile
+        auto lin_state = linear_profile.compute(t);
+        auto ang_state = angular_profile.compute(t);
+
+        // Reference position in odom frame
+        double ref_x = start_x + std::cos(direction_angle) * lin_state.position;
+        double ref_y = start_y + std::sin(direction_angle) * lin_state.position;
+        double ref_yaw = start_yaw + yaw_sign * ang_state.position;
+
+        // Reference velocity in odom frame (feedforward)
+        double ref_vx_odom = std::cos(direction_angle) * lin_state.velocity;
+        double ref_vy_odom = std::sin(direction_angle) * lin_state.velocity;
+        double ref_vyaw = yaw_sign * ang_state.velocity;
+
+        // Tracking error in odom frame (should be SMALL - cm, not m)
+        double track_err_x = ref_x - cur_x;
+        double track_err_y = ref_y - cur_y;
+        double track_err_yaw = ref_yaw - cur_yaw;
+        while (track_err_yaw > M_PI)
+          track_err_yaw -= 2.0 * M_PI;
+        while (track_err_yaw < -M_PI)
+          track_err_yaw += 2.0 * M_PI;
+
+        // PID on tracking error (all in odom frame - consistent with D-term)
+        Eigen::MatrixXd tracking_error(3, 1);
+        tracking_error << track_err_x, track_err_y, track_err_yaw;
+
+        // Apply decoupling if enabled
+        if (enable_decoupling_) {
+          tracking_error = decoupling_matrix_ * tracking_error;
+        }
+
+        Eigen::MatrixXd pid_output_odom =
+            mimo_.compute(tracking_error, position_matrix, dt);
+
+        // Total velocity in odom frame = feedforward + PID correction
+        double total_vx_odom = ref_vx_odom + pid_output_odom(0, 0);
+        double total_vy_odom = ref_vy_odom + pid_output_odom(1, 0);
+        double total_vyaw = ref_vyaw + pid_output_odom(2, 0);
+
+        // Transform from odom frame to base_link frame for cmd_vel
+        double cos_yaw = std::cos(cur_yaw);
+        double sin_yaw = std::sin(cur_yaw);
+
+        cmd_vel.linear.x = cos_yaw * total_vx_odom + sin_yaw * total_vy_odom;
+        cmd_vel.linear.y = -sin_yaw * total_vx_odom + cos_yaw * total_vy_odom;
+        cmd_vel.angular.z = total_vyaw;
+
+        // Output clamping: never exceed physical robot limits
+        double lin_mag = std::sqrt(cmd_vel.linear.x * cmd_vel.linear.x +
+                                   cmd_vel.linear.y * cmd_vel.linear.y);
+        if (lin_mag > max_linear_velocity_ && lin_mag > 0.001) {
+          double scale = max_linear_velocity_ / lin_mag;
+          cmd_vel.linear.x *= scale;
+          cmd_vel.linear.y *= scale;
+        }
+        cmd_vel.angular.z = std::clamp(
+            cmd_vel.angular.z, -max_angular_velocity_, max_angular_velocity_);
+
+        // Compute FF and PID in base_link for logging
+        v_ff_x = cos_yaw * ref_vx_odom + sin_yaw * ref_vy_odom;
+        v_ff_y = -sin_yaw * ref_vx_odom + cos_yaw * ref_vy_odom;
+        v_ff_yaw = ref_vyaw;
+        pid_out_x =
+            cos_yaw * pid_output_odom(0, 0) + sin_yaw * pid_output_odom(1, 0);
+        pid_out_y =
+            -sin_yaw * pid_output_odom(0, 0) + cos_yaw * pid_output_odom(1, 0);
+        pid_out_yaw = pid_output_odom(2, 0);
+
+        // Log tracking error (what PID actually sees)
+        log_err_x = track_err_x;
+        log_err_y = track_err_y;
+        log_err_yaw = track_err_yaw;
+
         RCLCPP_INFO(this->get_logger(),
-                    "Combined cmd_vel - x: %f (ff=%f + pid=%f), y: %f (ff=%f + "
-                    "pid=%f), yaw: %f (ff=%f + pid=%f)",
-                    cmd_vel.linear.x, v_ff_x, pid_output(0, 0),
-                    cmd_vel.linear.y, v_ff_y, pid_output(1, 0),
-                    cmd_vel.angular.z, v_ff_yaw, pid_output(2, 0));
+                    "[TRAJ] t=%.2f ref=(%.3f,%.3f) cur=(%.3f,%.3f) "
+                    "track_err=(%.4f,%.4f,%.4f)",
+                    t, ref_x, ref_y, cur_x, cur_y, track_err_x, track_err_y,
+                    track_err_yaw);
+        RCLCPP_INFO(this->get_logger(),
+                    "[TRAJ] ff=(%.3f,%.3f,%.3f) pid=(%.3f,%.3f,%.3f) "
+                    "cmd=(%.3f,%.3f,%.3f)",
+                    v_ff_x, v_ff_y, v_ff_yaw, pid_out_x, pid_out_y, pid_out_yaw,
+                    cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z);
+      } else {
+        // ===================================================================
+        // LEGACY MODE: Pure PID on goal error (no feedforward)
+        // ===================================================================
+        Eigen::MatrixXd pid_input = error_matrix;
+        if (enable_decoupling_) {
+          pid_input = decoupling_matrix_ * error_matrix;
+        }
+
+        Eigen::MatrixXd pid_output =
+            mimo_.compute(pid_input, position_matrix, dt);
+
+        cmd_vel.linear.x = pid_output(0, 0);
+        cmd_vel.linear.y = pid_output(1, 0);
+        cmd_vel.angular.z = pid_output(2, 0);
+
+        pid_out_x = pid_output(0, 0);
+        pid_out_y = pid_output(1, 0);
+        pid_out_yaw = pid_output(2, 0);
+        log_err_x = error_matrix(0, 0);
+        log_err_y = error_matrix(1, 0);
+        log_err_yaw = error_matrix(2, 0);
+
+        RCLCPP_INFO(this->get_logger(),
+                    "Error: (%.3f, %.3f, %.3f) PID: (%.3f, %.3f, %.3f)",
+                    log_err_x, log_err_y, log_err_yaw, pid_out_x, pid_out_y,
+                    pid_out_yaw);
       }
 
       cmd_vel_->publish(cmd_vel);
 
-      // PID Tuning Logging (with feedforward breakdown)
+      // PID Tuning Logging
       double timestamp = (current_time - start_time).seconds();
-      log_pid_data(timestamp, error_matrix(0, 0), error_matrix(1, 0),
-                   error_matrix(2, 0), cmd_vel.linear.x, cmd_vel.linear.y,
-                   cmd_vel.angular.z, target_x, target_y, target_yaw, v_ff_x,
-                   v_ff_y, v_ff_yaw, pid_output(0, 0), pid_output(1, 0),
-                   pid_output(2, 0));
+      log_pid_data(timestamp, log_err_x, log_err_y, log_err_yaw,
+                   cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z,
+                   target_x, target_y, target_yaw, v_ff_x, v_ff_y, v_ff_yaw,
+                   pid_out_x, pid_out_y, pid_out_yaw);
 
       previous_time = current_time;
     } else {
