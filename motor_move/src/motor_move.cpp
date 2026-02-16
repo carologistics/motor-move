@@ -303,8 +303,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   // --- Steuerungsparameter ---
   this->declare_parameter("loop_rate", 15.0);
   this->declare_parameter("timeout_seconds", 10.0);
-  this->declare_parameter("yaw_tolerance_degrees", 5.0);
-  this->declare_parameter("distance_tolerance", 0.05);
+  this->declare_parameter("yaw_tolerance_degrees", 2.0);
+  this->declare_parameter("distance_tolerance", 0.02);
 
   double loop_rate_val, timeout_val, yaw_tol_val, dist_tol_val;
   this->get_parameter("loop_rate", loop_rate_val);
