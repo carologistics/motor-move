@@ -50,11 +50,11 @@ def generate_launch_description():
     }
 
     # Create temporary YAML with substitutions
-    # Uses "motor_move" as root key - same config for all robots
+    # Uses "/**" wildcard so YAML works with any namespace
     configured_params = ParameterFile(
         RewrittenYaml(
             source_file=config,
-            root_key="motor_move",  # Loads motor_move/ros__parameters (same for all robots)
+            root_key="/**",
             param_rewrites=param_substitutions,
             convert_types=True,
         ),
