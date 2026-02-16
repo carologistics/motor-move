@@ -36,6 +36,7 @@ public:
                            const Eigen::VectorXd &max_limits);
   void set_integral_limits(double min_val, double max_val);
   void set_p_term_limits(double max_linear, double max_angular);
+  void set_d_filter_alpha(double alpha);
   void reset_integral();
   void reset(); // Reset all state for new goal
 
@@ -45,7 +46,9 @@ private:
   Eigen::MatrixXd Kd;
   Eigen::MatrixXd integral;
   Eigen::MatrixXd position_prev;
+  Eigen::MatrixXd derivative_filtered;
   bool first_run = true;
+  double d_filter_alpha_ = 0.3;
 
   Eigen::VectorXd integral_min;
   Eigen::VectorXd integral_max;

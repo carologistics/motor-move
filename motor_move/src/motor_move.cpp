@@ -259,8 +259,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   // --- PID Gains ---
   std::vector<double> default_Kp = {1.8, 0.0, 0.0, 0.0, 1.8,
                                     0.0, 0.0, 0.0, 1.8};
-  std::vector<double> default_Ki = {0.0, 0.0, 0.0, 0.0, 0.0,
-                                    0.0, 0.0, 0.0, 0.0};
+  std::vector<double> default_Ki = {0.3, 0.0, 0.0, 0.0, 0.3,
+                                    0.0, 0.0, 0.0, 0.3};
   std::vector<double> default_Kd = {0.2, 0.0, 0.0, 0.0, 0.2,
                                     0.0, 0.0, 0.0, 0.2};
 
@@ -295,6 +295,13 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(this->get_logger(),
               "P-term limits: linear=%.2f m/s, angular=%.2f rad/s", p_max_lin,
               p_max_ang);
+
+  // --- D-Term Low-Pass Filter ---
+  this->declare_parameter("d_filter_alpha", 0.3);
+  double d_alpha;
+  this->get_parameter("d_filter_alpha", d_alpha);
+  mimo_.set_d_filter_alpha(d_alpha);
+  RCLCPP_INFO(this->get_logger(), "D-term filter alpha: %.2f", d_alpha);
 
   // --- TF2 ---
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
@@ -491,6 +498,14 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
                   name.c_str(), val);
     }
 
+    // --- D-Term Filter ---
+    if (name == "d_filter_alpha") {
+      double val = param.as_double();
+      mimo_.set_d_filter_alpha(val);
+      RCLCPP_WARN(this->get_logger(),
+                  "[LIVE TUNING] d_filter_alpha updated to: %f", val);
+    }
+
     // --- Control parameters ---
     if (name == "loop_rate" || name == "timeout_seconds" ||
         name == "yaw_tolerance_degrees" || name == "distance_tolerance") {
@@ -683,6 +698,10 @@ void MotorMove::execute(
     this->get_parameter("p_max_linear", p_max_lin);
     this->get_parameter("p_max_angular", p_max_ang);
     mimo_.set_p_term_limits(p_max_lin, p_max_ang);
+
+    double d_alpha;
+    this->get_parameter("d_filter_alpha", d_alpha);
+    mimo_.set_d_filter_alpha(d_alpha);
   }
 
   rclcpp::Duration timeout_duration =

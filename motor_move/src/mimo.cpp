@@ -24,6 +24,7 @@ MIMO_PID::MIMO_PID(const Eigen::MatrixXd Kp, const Eigen::MatrixXd Ki,
   int n = Kp.cols();
   this->integral = Eigen::MatrixXd::Zero(n, 1);
   this->position_prev = Eigen::MatrixXd::Zero(n, 1);
+  this->derivative_filtered = Eigen::MatrixXd::Zero(n, 1);
   this->first_run = true;
 
   this->integral_min = Eigen::VectorXd::Constant(n, -10.0);
@@ -36,6 +37,7 @@ MIMO_PID::~MIMO_PID() {}
 MIMO_PID::MIMO_PID() {
   this->integral = Eigen::MatrixXd::Zero(3, 1);
   this->position_prev = Eigen::MatrixXd::Zero(3, 1);
+  this->derivative_filtered = Eigen::MatrixXd::Zero(3, 1);
   this->first_run = true;
 
   this->integral_min = Eigen::VectorXd::Constant(3, -10.0);
@@ -98,9 +100,14 @@ void MIMO_PID::set_p_term_limits(double max_linear, double max_angular) {
 
 void MIMO_PID::reset_integral() { this->integral.setZero(); }
 
+void MIMO_PID::set_d_filter_alpha(double alpha) {
+  this->d_filter_alpha_ = std::clamp(alpha, 0.0, 1.0);
+}
+
 void MIMO_PID::reset() {
   this->integral.setZero();
   this->position_prev.setZero();
+  this->derivative_filtered.setZero();
   this->first_run = true;
 }
 
@@ -124,17 +131,20 @@ Eigen::MatrixXd MIMO_PID::compute(const Eigen::MatrixXd error,
   this->integral += error * dt;
   clamp_integral();
 
-  // Derivative on Measurement - no spike on setpoint change!
-  Eigen::MatrixXd derivative;
+  // Derivative on Measurement with EMA low-pass filter
+  // alpha=1.0 means no filtering, alpha=0.0 means fully filtered (frozen)
+  Eigen::MatrixXd derivative_raw;
   if (first_run) {
-    // First run: no derivative (avoids spike)
-    derivative = Eigen::MatrixXd::Zero(position.rows(), 1);
+    derivative_raw = Eigen::MatrixXd::Zero(position.rows(), 1);
     first_run = false;
   } else {
-    // Derivative of POSITION (negative because we want to slow down)
-    derivative = -(position - this->position_prev) / dt;
+    derivative_raw = -(position - this->position_prev) / dt;
   }
   this->position_prev = position;
+  this->derivative_filtered =
+      d_filter_alpha_ * derivative_raw +
+      (1.0 - d_filter_alpha_) * this->derivative_filtered;
+  Eigen::MatrixXd derivative = this->derivative_filtered;
 
   // Calculate each term separately
   Eigen::MatrixXd p_term = this->Kp * error;
