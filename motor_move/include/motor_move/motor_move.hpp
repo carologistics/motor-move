@@ -113,7 +113,8 @@ private:
                     double cmd_vel_yaw, double target_x, double target_y,
                     double target_yaw, double ff_vel_x, double ff_vel_y,
                     double ff_vel_yaw, double pid_vel_x, double pid_vel_y,
-                    double pid_vel_yaw);
+                    double pid_vel_yaw, double goal_err_x, double goal_err_y,
+                    double goal_err_yaw);
   void finalize_tuning_logging();
   void generate_plot();
   void transfer_to_remote();

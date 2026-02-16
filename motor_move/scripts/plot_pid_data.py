@@ -32,60 +32,81 @@ import pandas as pd
 
 
 def load_csv(filepath: str) -> pd.DataFrame:
-    """Lädt die CSV-Datei und gibt ein DataFrame zurück."""
+    """Laedt die CSV-Datei und gibt ein DataFrame zurueck."""
     df = pd.read_csv(filepath)
-    # Zeitstempel relativ zum Start (in Sekunden)
     df["time_rel"] = df["timestamp"] - df["timestamp"].iloc[0]
     return df
 
 
 def create_pid_plot(df: pd.DataFrame, output_path: str):
-    """Erstellt einen 3-teiligen Plot für PID-Analyse."""
+    """Erstellt einen 4-teiligen Plot fuer PID-Analyse."""
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(14, 14), sharex=True)
     fig.suptitle("PID Tuning Analyse", fontsize=14, fontweight="bold")
 
     time = df["time_rel"]
 
-    # --- Subplot 1: Errors ---
+    has_goal_err = "goal_err_x" in df.columns
+    has_ff = "ff_vel_x" in df.columns and "pid_vel_x" in df.columns
+
+    # --- Subplot 1: Goal Error (Abstand zum Ziel) ---
     ax1 = axes[0]
-    ax1.plot(time, df["error_x"], "r-", label="error_x [m]", linewidth=1.5)
-    ax1.plot(time, df["error_y"], "g-", label="error_y [m]", linewidth=1.5)
-    ax1.plot(time, df["error_yaw"], "b-", label="error_yaw [rad]", linewidth=1.5)
+    if has_goal_err:
+        ax1.plot(time, df["goal_err_x"], "r-", label="goal_err_x [m]", linewidth=1.5)
+        ax1.plot(time, df["goal_err_y"], "g-", label="goal_err_y [m]", linewidth=1.5)
+        ax1.plot(time, df["goal_err_yaw"], "b-", label="goal_err_yaw [rad]", linewidth=1.5)
+    else:
+        ax1.plot(time, df["error_x"], "r-", label="error_x [m]", linewidth=1.5)
+        ax1.plot(time, df["error_y"], "g-", label="error_y [m]", linewidth=1.5)
+        ax1.plot(time, df["error_yaw"], "b-", label="error_yaw [rad]", linewidth=1.5)
     ax1.axhline(y=0, color="k", linestyle="--", alpha=0.3)
     ax1.set_ylabel("Error")
-    ax1.set_title("Regelfehler (error = target - current)")
+    ax1.set_title("Goal Error (Abstand zum Ziel)")
     ax1.legend(loc="upper right")
     ax1.grid(True, alpha=0.3)
 
-    # --- Subplot 2: cmd_vel (PID Output) ---
+    # --- Subplot 2: Tracking Error (Abweichung von Trajektorie) ---
     ax2 = axes[1]
-    ax2.plot(time, df["cmd_vel_x"], "r-", label="cmd_vel.x [m/s]", linewidth=1.5)
-    ax2.plot(time, df["cmd_vel_y"], "g-", label="cmd_vel.y [m/s]", linewidth=1.5)
-    ax2.plot(time, df["cmd_vel_yaw"], "b-", label="cmd_vel.z [rad/s]", linewidth=1.5)
+    ax2.plot(time, df["error_x"], "r-", label="track_err_x [m]", linewidth=1.5)
+    ax2.plot(time, df["error_y"], "g-", label="track_err_y [m]", linewidth=1.5)
+    ax2.plot(time, df["error_yaw"], "b-", label="track_err_yaw [rad]", linewidth=1.5)
     ax2.axhline(y=0, color="k", linestyle="--", alpha=0.3)
-    ax2.set_ylabel("Velocity Command")
-    ax2.set_title("PID-Ausgabe (cmd_vel)")
+    ax2.set_ylabel("Error")
+    ax2.set_title("Tracking Error (Abweichung von Trajektorie-Sollposition)")
     ax2.legend(loc="upper right")
     ax2.grid(True, alpha=0.3)
 
-    # --- Subplot 3: Target vs Current Position ---
+    # --- Subplot 3: Feedforward vs PID Geschwindigkeit ---
     ax3 = axes[2]
-    # Berechne aktuelle Position aus Target - Error
-    if "target_x" in df.columns:
-        current_x = df["target_x"] - df["error_x"]
-        current_y = df["target_y"] - df["error_y"]
-
-        ax3.plot(time, df["target_x"], "r--", label="target_x", linewidth=1, alpha=0.7)
-        ax3.plot(time, df["target_y"], "g--", label="target_y", linewidth=1, alpha=0.7)
-        ax3.plot(time, current_x, "r-", label="current_x", linewidth=1.5)
-        ax3.plot(time, current_y, "g-", label="current_y", linewidth=1.5)
-
-    ax3.set_xlabel("Zeit [s]")
-    ax3.set_ylabel("Position [m]")
-    ax3.set_title("Zielposition vs. aktuelle Position")
-    ax3.legend(loc="upper right")
+    if has_ff:
+        ax3.plot(time, df["ff_vel_x"], "r--", label="ff_vel_x", linewidth=1.2, alpha=0.8)
+        ax3.plot(time, df["ff_vel_y"], "g--", label="ff_vel_y", linewidth=1.2, alpha=0.8)
+        ax3.plot(time, df["ff_vel_yaw"], "b--", label="ff_vel_yaw", linewidth=1.2, alpha=0.8)
+        ax3.plot(time, df["pid_vel_x"], "r-", label="pid_vel_x", linewidth=1.5)
+        ax3.plot(time, df["pid_vel_y"], "g-", label="pid_vel_y", linewidth=1.5)
+        ax3.plot(time, df["pid_vel_yaw"], "b-", label="pid_vel_yaw", linewidth=1.5)
+        ax3.set_title("Feedforward (--) vs PID (-) Geschwindigkeit")
+    else:
+        ax3.plot(time, df["cmd_vel_x"], "r-", label="cmd_vel_x", linewidth=1.5)
+        ax3.plot(time, df["cmd_vel_y"], "g-", label="cmd_vel_y", linewidth=1.5)
+        ax3.plot(time, df["cmd_vel_yaw"], "b-", label="cmd_vel_yaw", linewidth=1.5)
+        ax3.set_title("cmd_vel (kein FF/PID Breakdown verfuegbar)")
+    ax3.axhline(y=0, color="k", linestyle="--", alpha=0.3)
+    ax3.set_ylabel("Velocity [m/s, rad/s]")
+    ax3.legend(loc="upper right", fontsize=8, ncol=2)
     ax3.grid(True, alpha=0.3)
+
+    # --- Subplot 4: cmd_vel Total ---
+    ax4 = axes[3]
+    ax4.plot(time, df["cmd_vel_x"], "r-", label="cmd_vel.x [m/s]", linewidth=1.5)
+    ax4.plot(time, df["cmd_vel_y"], "g-", label="cmd_vel.y [m/s]", linewidth=1.5)
+    ax4.plot(time, df["cmd_vel_yaw"], "b-", label="cmd_vel.z [rad/s]", linewidth=1.5)
+    ax4.axhline(y=0, color="k", linestyle="--", alpha=0.3)
+    ax4.set_xlabel("Zeit [s]")
+    ax4.set_ylabel("Velocity Command")
+    ax4.set_title("cmd_vel Total (nach Clamping)")
+    ax4.legend(loc="upper right")
+    ax4.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -105,15 +126,25 @@ def print_statistics(df: pd.DataFrame):
     print(f"Datenpunkte: {len(df)}")
     print(f"Durchschn. Loop-Rate: {len(df) / duration:.1f} Hz")
 
-    print("\nFinale Fehler:")
+    has_goal_err = "goal_err_x" in df.columns
+
+    if has_goal_err:
+        print("\nFinaler Goal Error:")
+        print(f"  goal_err_x:   {df['goal_err_x'].iloc[-1]:+.4f} m")
+        print(f"  goal_err_y:   {df['goal_err_y'].iloc[-1]:+.4f} m")
+        print(
+            f"  goal_err_yaw: {df['goal_err_yaw'].iloc[-1]:+.4f} rad ({np.degrees(df['goal_err_yaw'].iloc[-1]):+.2f})"
+        )
+
+    print("\nFinaler Tracking Error:")
     print(f"  error_x:   {df['error_x'].iloc[-1]:+.4f} m")
     print(f"  error_y:   {df['error_y'].iloc[-1]:+.4f} m")
-    print(f"  error_yaw: {df['error_yaw'].iloc[-1]:+.4f} rad ({np.degrees(df['error_yaw'].iloc[-1]):+.2f}°)")
+    print(f"  error_yaw: {df['error_yaw'].iloc[-1]:+.4f} rad ({np.degrees(df['error_yaw'].iloc[-1]):+.2f})")
 
-    print("\nMax. Fehler:")
+    print("\nMax. Tracking Error:")
     print(f"  |error_x|:   {df['error_x'].abs().max():.4f} m")
     print(f"  |error_y|:   {df['error_y'].abs().max():.4f} m")
-    print(f"  |error_yaw|: {df['error_yaw'].abs().max():.4f} rad ({np.degrees(df['error_yaw'].abs().max()):.2f}°)")
+    print(f"  |error_yaw|: {df['error_yaw'].abs().max():.4f} rad ({np.degrees(df['error_yaw'].abs().max()):.2f})")
 
     print("\nMax. cmd_vel:")
     print(f"  |cmd_vel_x|:   {df['cmd_vel_x'].abs().max():.3f} m/s")
@@ -133,7 +164,6 @@ def main():
         print(f"Fehler: Datei nicht gefunden: {csv_path}")
         sys.exit(1)
 
-    # Output-Pfad: gleicher Ordner, pid_analysis.png
     if len(sys.argv) >= 3:
         output_path = Path(sys.argv[2]).expanduser().resolve()
     else:

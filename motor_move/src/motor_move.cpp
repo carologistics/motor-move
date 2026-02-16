@@ -94,12 +94,13 @@ void MotorMove::init_tuning_logging() {
     return;
   }
 
-  // CSV-Header: original columns + feedforward/pid breakdown
+  // CSV-Header: tracking error, cmd_vel, target, ff/pid breakdown, goal error
   csv_file_ << "timestamp,error_x,error_y,error_yaw,"
             << "cmd_vel_x,cmd_vel_y,cmd_vel_yaw,"
             << "target_x,target_y,target_yaw,"
             << "ff_vel_x,ff_vel_y,ff_vel_yaw,"
-            << "pid_vel_x,pid_vel_y,pid_vel_yaw\n";
+            << "pid_vel_x,pid_vel_y,pid_vel_yaw,"
+            << "goal_err_x,goal_err_y,goal_err_yaw\n";
   csv_file_.flush();
 
   logging_active_ = true;
@@ -111,7 +112,8 @@ void MotorMove::log_pid_data(
     double timestamp, double error_x, double error_y, double error_yaw,
     double cmd_vel_x, double cmd_vel_y, double cmd_vel_yaw, double target_x,
     double target_y, double target_yaw, double ff_vel_x, double ff_vel_y,
-    double ff_vel_yaw, double pid_vel_x, double pid_vel_y, double pid_vel_yaw) {
+    double ff_vel_yaw, double pid_vel_x, double pid_vel_y, double pid_vel_yaw,
+    double goal_err_x, double goal_err_y, double goal_err_yaw) {
   if (!logging_active_ || !csv_file_.is_open()) {
     return;
   }
@@ -121,7 +123,8 @@ void MotorMove::log_pid_data(
             << cmd_vel_y << "," << cmd_vel_yaw << "," << target_x << ","
             << target_y << "," << target_yaw << "," << ff_vel_x << ","
             << ff_vel_y << "," << ff_vel_yaw << "," << pid_vel_x << ","
-            << pid_vel_y << "," << pid_vel_yaw << "\n";
+            << pid_vel_y << "," << pid_vel_yaw << "," << goal_err_x << ","
+            << goal_err_y << "," << goal_err_yaw << "\n";
 }
 
 void MotorMove::generate_plot() {
@@ -974,7 +977,8 @@ void MotorMove::execute(
       log_pid_data(timestamp, log_err_x, log_err_y, log_err_yaw,
                    cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z,
                    target_x, target_y, target_yaw, v_ff_x, v_ff_y, v_ff_yaw,
-                   pid_out_x, pid_out_y, pid_out_yaw);
+                   pid_out_x, pid_out_y, pid_out_yaw, error_matrix(0, 0),
+                   error_matrix(1, 0), error_matrix(2, 0));
 
       previous_time = current_time;
     } else {
