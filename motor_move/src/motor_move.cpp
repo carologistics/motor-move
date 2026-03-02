@@ -351,52 +351,38 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   }
 
   // =========================================================================
-  // DECOUPLING (Entkopplung)
+  // PID (toggleable)
   // =========================================================================
-  std::vector<double> default_decoupling = {1.0, 0.0, 0.0, 0.0, 1.0,
-                                            0.0, 0.0, 0.0, 1.0};
-  this->declare_parameter("decoupling_matrix", default_decoupling);
-  this->declare_parameter("enable_decoupling", false);
+  this->declare_parameter("enable_pid", true);
+  this->get_parameter("enable_pid", enable_pid_);
 
-  this->get_parameter("enable_decoupling", enable_decoupling_);
-  decoupling_matrix_ = get_matrix_parameter("decoupling_matrix", 3, 3);
-
-  if (enable_decoupling_) {
-    RCLCPP_WARN(this->get_logger(), "=== DECOUPLING ENABLED ===");
-    RCLCPP_WARN(this->get_logger(), "Decoupling matrix D:\n%s",
-                matrix_to_string(decoupling_matrix_).c_str());
+  if (enable_pid_) {
+    RCLCPP_INFO(this->get_logger(), "=== PID ENABLED ===");
+  } else {
+    RCLCPP_WARN(this->get_logger(), "=== PID DISABLED (feedforward only) ===");
   }
 
   // =========================================================================
-  // FEEDFORWARD (Motion Profile)
+  // FEEDFORWARD (Motion Profile) — always active
   // =========================================================================
-  this->declare_parameter("enable_feedforward", false);
   this->declare_parameter("max_linear_velocity", 0.5);
   this->declare_parameter("max_linear_acceleration", 0.5);
   this->declare_parameter("max_angular_velocity", 1.0);
   this->declare_parameter("max_angular_acceleration", 1.0);
 
-  this->get_parameter("enable_feedforward", enable_feedforward_);
   this->get_parameter("max_linear_velocity", max_linear_velocity_);
   this->get_parameter("max_linear_acceleration", max_linear_acceleration_);
   this->get_parameter("max_angular_velocity", max_angular_velocity_);
   this->get_parameter("max_angular_acceleration", max_angular_acceleration_);
 
-  if (enable_feedforward_) {
-    RCLCPP_WARN(this->get_logger(), "=== FEEDFORWARD ENABLED ===");
-    RCLCPP_WARN(
-        this->get_logger(),
-        "Motion profile: max_lin_vel=%.2f m/s, max_lin_accel=%.2f m/s^2",
-        max_linear_velocity_, max_linear_acceleration_);
-    RCLCPP_WARN(
-        this->get_logger(),
-        "                max_ang_vel=%.2f rad/s, max_ang_accel=%.2f rad/s^2",
-        max_angular_velocity_, max_angular_acceleration_);
-  } else {
-    RCLCPP_INFO(
-        this->get_logger(),
-        "Feedforward disabled. Use enable_feedforward:=true to enable.");
-  }
+  RCLCPP_INFO(
+      this->get_logger(),
+      "Feedforward (always on): max_lin_vel=%.2f m/s, max_lin_accel=%.2f m/s^2",
+      max_linear_velocity_, max_linear_acceleration_);
+  RCLCPP_INFO(this->get_logger(),
+              "                        max_ang_vel=%.2f rad/s, "
+              "max_ang_accel=%.2f rad/s^2",
+              max_angular_velocity_, max_angular_acceleration_);
 
   // =========================================================================
   // LIVE TUNING FEATURE
@@ -407,9 +393,9 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
 
   if (live_tuning_enabled) {
     RCLCPP_WARN(this->get_logger(), "=== LIVE TUNING MODE ENABLED ===");
-    RCLCPP_WARN(
-        this->get_logger(),
-        "PID gains, P-limits, feedforward params can be changed at runtime.");
+    RCLCPP_WARN(this->get_logger(),
+                "PID gains, P-limits, enable_pid, feedforward params can be "
+                "changed at runtime.");
     RCLCPP_WARN(
         this->get_logger(),
         "Use: ros2 param set <node> Kp \"[1.8, 0, 0, 0, 1.8, 0, 0, 0, 1.8]\"");
@@ -513,42 +499,11 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
                   name.c_str(), param.as_double());
     }
 
-    // --- Decoupling ---
-    if (name == "enable_decoupling") {
-      enable_decoupling_ = param.as_bool();
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] Decoupling %s",
-                  enable_decoupling_ ? "ENABLED" : "DISABLED");
-    }
-
-    if (name == "decoupling_matrix") {
-      if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
-        result.successful = false;
-        result.reason = "decoupling_matrix must be a double array";
-        return result;
-      }
-      auto values = param.as_double_array();
-      if (values.size() != 9) {
-        result.successful = false;
-        result.reason = "decoupling_matrix must have exactly 9 elements (3x3)";
-        return result;
-      }
-      Eigen::MatrixXd matrix =
-          Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
-                                   Eigen::RowMajor>>(values.data(), 3, 3);
-      {
-        std::lock_guard lock{target_pose_mutex_};
-        decoupling_matrix_ = matrix;
-      }
-      RCLCPP_WARN(this->get_logger(),
-                  "[LIVE TUNING] Decoupling matrix updated to:\n%s",
-                  matrix_to_string(matrix).c_str());
-    }
-
-    // --- Feedforward ---
-    if (name == "enable_feedforward") {
-      enable_feedforward_ = param.as_bool();
-      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] Feedforward %s",
-                  enable_feedforward_ ? "ENABLED" : "DISABLED");
+    // --- PID ---
+    if (name == "enable_pid") {
+      enable_pid_ = param.as_bool();
+      RCLCPP_WARN(this->get_logger(), "[LIVE TUNING] PID %s",
+                  enable_pid_ ? "ENABLED" : "DISABLED");
     }
 
     if (name == "max_linear_velocity") {
@@ -676,14 +631,13 @@ void MotorMove::execute(
 
   // Read feedforward params fresh from parameter server (works without live
   // tuning)
-  this->get_parameter("enable_feedforward", enable_feedforward_);
   this->get_parameter("max_linear_velocity", max_linear_velocity_);
   this->get_parameter("max_linear_acceleration", max_linear_acceleration_);
   this->get_parameter("max_angular_velocity", max_angular_velocity_);
   this->get_parameter("max_angular_acceleration", max_angular_acceleration_);
 
-  // Read decoupling params fresh
-  this->get_parameter("enable_decoupling", enable_decoupling_);
+  // Read PID param fresh
+  this->get_parameter("enable_pid", enable_pid_);
 
   // Read PID gains fresh (works without live tuning callback)
   {
@@ -730,7 +684,7 @@ void MotorMove::execute(
   }
 
   // =========================================================================
-  // TRAJECTORY SETUP (for feedforward mode)
+  // TRAJECTORY SETUP (feedforward — always active)
   // =========================================================================
   double start_x = 0.0, start_y = 0.0, start_yaw = 0.0;
   double direction_angle = 0.0;
@@ -738,7 +692,7 @@ void MotorMove::execute(
   double angular_distance = 0.0;
   TrajectoryProfile linear_profile, angular_profile;
 
-  if (enable_feedforward_) {
+  {
     // Get start position in odom frame
     geometry_msgs::msg::TransformStamped start_tf;
     try {
@@ -869,125 +823,100 @@ void MotorMove::execute(
       double log_err_x, log_err_y, log_err_yaw;
       geometry_msgs::msg::Twist cmd_vel;
 
-      if (enable_feedforward_) {
-        // ===================================================================
-        // TRAJECTORY-BASED FEEDFORWARD + TRACKING ERROR PID
-        // ===================================================================
-        double t = elapsed.seconds();
-        double yaw_sign = (angular_distance >= 0.0) ? 1.0 : -1.0;
+      // =====================================================================
+      // FEEDFORWARD (always active) + optional PID correction
+      // =====================================================================
+      double t = elapsed.seconds();
+      double yaw_sign = (angular_distance >= 0.0) ? 1.0 : -1.0;
 
-        // Reference from trajectory profile
-        auto lin_state = linear_profile.compute(t);
-        auto ang_state = angular_profile.compute(t);
+      // Reference from trajectory profile
+      auto lin_state = linear_profile.compute(t);
+      auto ang_state = angular_profile.compute(t);
 
-        // Reference position in odom frame
-        double ref_x = start_x + std::cos(direction_angle) * lin_state.position;
-        double ref_y = start_y + std::sin(direction_angle) * lin_state.position;
-        double ref_yaw = start_yaw + yaw_sign * ang_state.position;
+      // Reference position in odom frame
+      double ref_x = start_x + std::cos(direction_angle) * lin_state.position;
+      double ref_y = start_y + std::sin(direction_angle) * lin_state.position;
+      double ref_yaw = start_yaw + yaw_sign * ang_state.position;
 
-        // Reference velocity in odom frame (feedforward)
-        double ref_vx_odom = std::cos(direction_angle) * lin_state.velocity;
-        double ref_vy_odom = std::sin(direction_angle) * lin_state.velocity;
-        double ref_vyaw = yaw_sign * ang_state.velocity;
+      // Reference velocity in odom frame (feedforward)
+      double ref_vx_odom = std::cos(direction_angle) * lin_state.velocity;
+      double ref_vy_odom = std::sin(direction_angle) * lin_state.velocity;
+      double ref_vyaw = yaw_sign * ang_state.velocity;
 
-        // Tracking error in odom frame (should be SMALL - cm, not m)
-        double track_err_x = ref_x - cur_x;
-        double track_err_y = ref_y - cur_y;
-        double track_err_yaw = ref_yaw - cur_yaw;
-        while (track_err_yaw > M_PI)
-          track_err_yaw -= 2.0 * M_PI;
-        while (track_err_yaw < -M_PI)
-          track_err_yaw += 2.0 * M_PI;
+      // Total velocity starts with feedforward
+      double total_vx_odom = ref_vx_odom;
+      double total_vy_odom = ref_vy_odom;
+      double total_vyaw = ref_vyaw;
 
-        // PID on tracking error (all in odom frame - consistent with D-term)
+      // Tracking error in odom frame
+      double track_err_x = ref_x - cur_x;
+      double track_err_y = ref_y - cur_y;
+      double track_err_yaw = ref_yaw - cur_yaw;
+      while (track_err_yaw > M_PI)
+        track_err_yaw -= 2.0 * M_PI;
+      while (track_err_yaw < -M_PI)
+        track_err_yaw += 2.0 * M_PI;
+
+      log_err_x = track_err_x;
+      log_err_y = track_err_y;
+      log_err_yaw = track_err_yaw;
+
+      // Add PID correction if enabled
+      if (enable_pid_) {
         Eigen::MatrixXd tracking_error(3, 1);
         tracking_error << track_err_x, track_err_y, track_err_yaw;
-
-        // Apply decoupling if enabled
-        if (enable_decoupling_) {
-          tracking_error = decoupling_matrix_ * tracking_error;
-        }
 
         Eigen::MatrixXd pid_output_odom =
             mimo_.compute(tracking_error, position_matrix, dt);
 
-        // Total velocity in odom frame = feedforward + PID correction
-        double total_vx_odom = ref_vx_odom + pid_output_odom(0, 0);
-        double total_vy_odom = ref_vy_odom + pid_output_odom(1, 0);
-        double total_vyaw = ref_vyaw + pid_output_odom(2, 0);
+        total_vx_odom += pid_output_odom(0, 0);
+        total_vy_odom += pid_output_odom(1, 0);
+        total_vyaw += pid_output_odom(2, 0);
 
-        // Transform from odom frame to base_link frame for cmd_vel
+        // Compute PID in base_link for logging
         double cos_yaw = std::cos(cur_yaw);
         double sin_yaw = std::sin(cur_yaw);
-
-        cmd_vel.linear.x = cos_yaw * total_vx_odom + sin_yaw * total_vy_odom;
-        cmd_vel.linear.y = -sin_yaw * total_vx_odom + cos_yaw * total_vy_odom;
-        cmd_vel.angular.z = total_vyaw;
-
-        // Output clamping: never exceed physical robot limits
-        double lin_mag = std::sqrt(cmd_vel.linear.x * cmd_vel.linear.x +
-                                   cmd_vel.linear.y * cmd_vel.linear.y);
-        if (lin_mag > max_linear_velocity_ && lin_mag > 0.001) {
-          double scale = max_linear_velocity_ / lin_mag;
-          cmd_vel.linear.x *= scale;
-          cmd_vel.linear.y *= scale;
-        }
-        cmd_vel.angular.z = std::clamp(
-            cmd_vel.angular.z, -max_angular_velocity_, max_angular_velocity_);
-
-        // Compute FF and PID in base_link for logging
-        v_ff_x = cos_yaw * ref_vx_odom + sin_yaw * ref_vy_odom;
-        v_ff_y = -sin_yaw * ref_vx_odom + cos_yaw * ref_vy_odom;
-        v_ff_yaw = ref_vyaw;
         pid_out_x =
             cos_yaw * pid_output_odom(0, 0) + sin_yaw * pid_output_odom(1, 0);
         pid_out_y =
             -sin_yaw * pid_output_odom(0, 0) + cos_yaw * pid_output_odom(1, 0);
         pid_out_yaw = pid_output_odom(2, 0);
-
-        // Log tracking error (what PID actually sees)
-        log_err_x = track_err_x;
-        log_err_y = track_err_y;
-        log_err_yaw = track_err_yaw;
-
-        RCLCPP_INFO(this->get_logger(),
-                    "[TRAJ] t=%.2f ref=(%.3f,%.3f) cur=(%.3f,%.3f) "
-                    "track_err=(%.4f,%.4f,%.4f)",
-                    t, ref_x, ref_y, cur_x, cur_y, track_err_x, track_err_y,
-                    track_err_yaw);
-        RCLCPP_INFO(this->get_logger(),
-                    "[TRAJ] ff=(%.3f,%.3f,%.3f) pid=(%.3f,%.3f,%.3f) "
-                    "cmd=(%.3f,%.3f,%.3f)",
-                    v_ff_x, v_ff_y, v_ff_yaw, pid_out_x, pid_out_y, pid_out_yaw,
-                    cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z);
-      } else {
-        // ===================================================================
-        // LEGACY MODE: Pure PID on goal error (no feedforward)
-        // ===================================================================
-        Eigen::MatrixXd pid_input = error_matrix;
-        if (enable_decoupling_) {
-          pid_input = decoupling_matrix_ * error_matrix;
-        }
-
-        Eigen::MatrixXd pid_output =
-            mimo_.compute(pid_input, position_matrix, dt);
-
-        cmd_vel.linear.x = pid_output(0, 0);
-        cmd_vel.linear.y = pid_output(1, 0);
-        cmd_vel.angular.z = pid_output(2, 0);
-
-        pid_out_x = pid_output(0, 0);
-        pid_out_y = pid_output(1, 0);
-        pid_out_yaw = pid_output(2, 0);
-        log_err_x = error_matrix(0, 0);
-        log_err_y = error_matrix(1, 0);
-        log_err_yaw = error_matrix(2, 0);
-
-        RCLCPP_INFO(this->get_logger(),
-                    "Error: (%.3f, %.3f, %.3f) PID: (%.3f, %.3f, %.3f)",
-                    log_err_x, log_err_y, log_err_yaw, pid_out_x, pid_out_y,
-                    pid_out_yaw);
       }
+
+      // Transform from odom frame to base_link frame for cmd_vel
+      double cos_yaw = std::cos(cur_yaw);
+      double sin_yaw = std::sin(cur_yaw);
+
+      cmd_vel.linear.x = cos_yaw * total_vx_odom + sin_yaw * total_vy_odom;
+      cmd_vel.linear.y = -sin_yaw * total_vx_odom + cos_yaw * total_vy_odom;
+      cmd_vel.angular.z = total_vyaw;
+
+      // Output clamping: never exceed physical robot limits
+      double lin_mag = std::sqrt(cmd_vel.linear.x * cmd_vel.linear.x +
+                                 cmd_vel.linear.y * cmd_vel.linear.y);
+      if (lin_mag > max_linear_velocity_ && lin_mag > 0.001) {
+        double scale = max_linear_velocity_ / lin_mag;
+        cmd_vel.linear.x *= scale;
+        cmd_vel.linear.y *= scale;
+      }
+      cmd_vel.angular.z = std::clamp(cmd_vel.angular.z, -max_angular_velocity_,
+                                     max_angular_velocity_);
+
+      // Compute FF in base_link for logging
+      v_ff_x = cos_yaw * ref_vx_odom + sin_yaw * ref_vy_odom;
+      v_ff_y = -sin_yaw * ref_vx_odom + cos_yaw * ref_vy_odom;
+      v_ff_yaw = ref_vyaw;
+
+      RCLCPP_INFO(this->get_logger(),
+                  "[TRAJ] t=%.2f ref=(%.3f,%.3f) cur=(%.3f,%.3f) "
+                  "track_err=(%.4f,%.4f,%.4f)",
+                  t, ref_x, ref_y, cur_x, cur_y, track_err_x, track_err_y,
+                  track_err_yaw);
+      RCLCPP_INFO(this->get_logger(),
+                  "[TRAJ] ff=(%.3f,%.3f,%.3f) pid=(%.3f,%.3f,%.3f) "
+                  "cmd=(%.3f,%.3f,%.3f)",
+                  v_ff_x, v_ff_y, v_ff_yaw, pid_out_x, pid_out_y, pid_out_yaw,
+                  cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z);
 
       cmd_vel_->publish(cmd_vel);
 

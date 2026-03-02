@@ -93,15 +93,13 @@ private:
   std::string tuning_remote_target_;
 
   // =========================================================================
-  // DECOUPLING (Entkopplung)
+  // PID (can be toggled on/off)
   // =========================================================================
-  bool enable_decoupling_;
-  Eigen::MatrixXd decoupling_matrix_;
+  bool enable_pid_;
 
   // =========================================================================
-  // FEEDFORWARD (Motion Profile)
+  // FEEDFORWARD (Motion Profile) — always active
   // =========================================================================
-  bool enable_feedforward_;
   double max_linear_velocity_;
   double max_linear_acceleration_;
   double max_angular_velocity_;

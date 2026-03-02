@@ -36,17 +36,17 @@
     # Kd (Derivative): Daempft Ueberschwinger, bremst vor dem Ziel.
     #   Hoeher = mehr Daempfung, aber kann traege machen.
     # =========================================================================
-    Kp: [1.8, 0.0, 0.0,
-         0.0, 1.8, 0.0,
-         0.0, 0.0, 1.8]
+    Kp: [1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0]
 
-    Ki: [0.3, 0.0, 0.0,
-         0.0, 0.3, 0.0,
-         0.0, 0.0, 0.3]
+    Ki: [0.1, 0.0, 0.0,
+         0.0, 0.1, 0.0,
+         0.0, 0.0, 0.1]
 
-    Kd: [0.2, 0.0, 0.0,
-         0.0, 0.2, 0.0,
-         0.0, 0.0, 0.2]
+    Kd: [0.9, 0.0, 0.0,
+         0.0, 0.9, 0.0,
+         0.0, 0.0, 0.9]
 
     # =========================================================================
     # P-Term Limits
@@ -79,39 +79,31 @@
     distance_tolerance: 0.02
 
     # =========================================================================
-    # Feedforward (Vorsteuerung / Motion Profile)
+    # PID Regler (ein/aus)
+    # =========================================================================
+    # PID korrigiert den Tracking-Fehler (Differenz zwischen Soll- und
+    # Ist-Position entlang der Trajektorie). Kann deaktiviert werden,
+    # um reines Feedforward zu testen.
+    # =========================================================================
+    enable_pid: true
+
+    # =========================================================================
+    # Feedforward (Vorsteuerung / Motion Profile) — immer aktiv
     # =========================================================================
     # Berechnet eine Soll-Geschwindigkeit basierend auf der Entfernung
     # zum Ziel (Trapezprofil mit Bremskurve). Der Roboter faehrt damit
     # vorausschauend los und bremst sanft ab, statt nur auf den Fehler
-    # zu reagieren. Ergebnis: schnellere und glattere Bewegung.
+    # zu reagieren. Feedforward ist immer aktiv und kann nicht deaktiviert werden.
     #
-    # enable_feedforward:        Vorsteuerung ein/aus
     # max_linear_velocity:       Max. Fahrgeschwindigkeit [m/s]
     # max_linear_acceleration:   Max. Beschleunigung linear [m/s^2]
     # max_angular_velocity:      Max. Drehgeschwindigkeit [rad/s]
     # max_angular_acceleration:  Max. Beschleunigung Drehung [rad/s^2]
     # =========================================================================
-    enable_feedforward: true
     max_linear_velocity: 0.5
     max_linear_acceleration: 0.5
     max_angular_velocity: 1.0
     max_angular_acceleration: 1.0
-
-    # =========================================================================
-    # Decoupling (Entkopplung)
-    # =========================================================================
-    # Kompensiert Quereffekte zwischen den Achsen. Bei manchen Robotern
-    # beeinflusst z.B. eine X-Bewegung auch die Y-Achse. Die Entkopplungs-
-    # matrix korrigiert das. Im Normalfall (Einheitsmatrix) passiert nichts.
-    #
-    # enable_decoupling:  Entkopplung ein/aus
-    # decoupling_matrix:  3x3 Kompensationsmatrix (zeilenweise)
-    # =========================================================================
-    enable_decoupling: false
-    decoupling_matrix: [1.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0,
-                        0.0, 0.0, 1.0]
 
     # =========================================================================
     # Live Tuning

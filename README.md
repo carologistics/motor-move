@@ -1,6 +1,6 @@
 # motor_move
 
-ROS2 Action Server for omnidirectional robot movement using a MIMO-PID controller with optional feedforward motion profile.
+ROS2 Action Server for omnidirectional robot movement using a feedforward motion profile with optional MIMO-PID correction.
 
 ## Packages
 
@@ -39,7 +39,7 @@ Direct run with inline parameters:
 ```bash
 ros2 run motor_move motor_move --ros-args \
   -r __ns:=/robotinobase1 \
-  -p enable_feedforward:=true \
+  -p enable_pid:=true \
   -p enable_tuning_log:=true \
   -p tuning_remote_target:="user@{youre_ip}:/home/user/pid_tuning"
 ```
@@ -83,8 +83,8 @@ ros2 action send_goal /robotinobase1/motor_move_action motor_move_msgs/action/Mo
 The controller runs a loop at 15 Hz. Each cycle it:
 
 1. Transforms the target pose into the robot's base frame to get the current error (dx, dy, dyaw)
-2. Computes a **feedforward** velocity from a trapezoidal motion profile (braking curve based on remaining distance)
-3. Runs the error through a **MIMO-PID controller** (3x3 gain matrices for x, y, yaw)
+2. Computes a **feedforward** velocity from a trapezoidal motion profile (always active)
+3. Optionally adds a **MIMO-PID correction** on the tracking error (can be toggled with `enable_pid`)
 4. Publishes the combined velocity as `cmd_vel`
 5. Terminates when the position and yaw error are within tolerance, or on timeout
 
@@ -115,26 +115,17 @@ All parameters are configured in `motor_move/config/motor_move.yaml`.
 | `distance_tolerance` | `0.05` | Position error threshold for goal reached [m] |
 | `yaw_tolerance_degrees` | `5.0` | Yaw error threshold for goal reached [deg] |
 
-### Feedforward
+### Feedforward (always active)
 
-Computes a target velocity based on distance to goal using a trapezoidal profile. The robot accelerates up to max velocity and brakes smoothly before the target.
+Computes a target velocity based on distance to goal using a trapezoidal profile. The robot accelerates up to max velocity and brakes smoothly before the target. Feedforward is always active and cannot be disabled.
 
 | Parameter | Default | Description |
 |---|---|---|
-| `enable_feedforward` | `true` | Enable motion profile feedforward |
+| `enable_pid` | `true` | Enable PID correction on tracking error |
 | `max_linear_velocity` | `0.5` | Max linear speed [m/s] |
 | `max_linear_acceleration` | `0.5` | Max linear acceleration [m/s²] |
 | `max_angular_velocity` | `1.0` | Max angular speed [rad/s] |
 | `max_angular_acceleration` | `1.0` | Max angular acceleration [rad/s²] |
-
-### Decoupling
-
-Compensates cross-axis coupling (e.g. x-movement affecting y). Uses a 3x3 matrix applied to the error before PID. Identity matrix = no effect.
-
-| Parameter | Default | Description |
-|---|---|---|
-| `enable_decoupling` | `false` | Enable decoupling matrix |
-| `decoupling_matrix` | Identity | 3x3 compensation matrix (row-major) |
 
 ### Tuning and Logging
 
