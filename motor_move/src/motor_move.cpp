@@ -779,7 +779,18 @@ void MotorMove::execute(
 
     float yaw = std::abs(tf2::getYaw(error.pose.orientation));
 
-    if (yaw > YAW_TOLERANCE || distance > DISTANCE_TOLERANCE) {
+    // Termination condition depends on mode:
+    //   PID on:  tolerance-based (position + yaw within threshold)
+    //   PID off: profile-based (both ramps finished)
+    bool goal_reached;
+    if (enable_pid_) {
+      goal_reached = (yaw <= YAW_TOLERANCE && distance <= DISTANCE_TOLERANCE);
+    } else {
+      goal_reached = linear_profile.is_finished(elapsed.seconds()) &&
+                     angular_profile.is_finished(elapsed.seconds());
+    }
+
+    if (!goal_reached) {
       RCLCPP_INFO(this->get_logger(),
                   "Distance to target: %f, Yaw error: %f (tolerance: %f)",
                   distance, yaw, YAW_TOLERANCE);
@@ -939,12 +950,17 @@ void MotorMove::execute(
 
       result->success = true;
       goal_handle->succeed(result);
-      RCLCPP_INFO(this->get_logger(),
-                  "Ziel erreicht - Toleranz erfüllt (Yaw: %f <= %f, Distance: "
-                  "%f <= %f)",
-                  yaw, YAW_TOLERANCE, distance, DISTANCE_TOLERANCE);
-      RCLCPP_INFO(this->get_logger(), "Distance to target: %f", distance);
-      RCLCPP_INFO(this->get_logger(), "Yaw to target: %f", yaw);
+      if (enable_pid_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "Goal reached - tolerance met (Yaw: %f <= %f, Distance: "
+                    "%f <= %f)",
+                    yaw, YAW_TOLERANCE, distance, DISTANCE_TOLERANCE);
+      } else {
+        RCLCPP_INFO(this->get_logger(),
+                    "Goal reached - trajectory profile finished (remaining "
+                    "distance: %f, yaw: %f)",
+                    distance, yaw);
+      }
       RCLCPP_INFO(this->get_logger(), "Delta x: %f y: %f",
                   error.pose.position.x, error.pose.position.y);
       finalize_tuning_logging();
