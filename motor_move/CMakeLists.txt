@@ -15,7 +15,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(motor_move_msgs REQUIRED)
 
-add_executable(${PROJECT_NAME} src/motor_move.cpp src/mimo.cpp)
+add_executable(${PROJECT_NAME} src/motor_move.cpp)
 
 target_include_directories(
   ${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

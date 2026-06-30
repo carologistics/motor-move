@@ -1,0 +1,9 @@
+<library path="motor_move_rviz_plugin">
+  <class name="motor_move_rviz_plugin/MotorMovePanel"
+         type="motor_move_rviz_plugin::MotorMovePanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Sends motor_move action goals, updates speed parameters, and compares ideal and real motion plots.
+    </description>
+  </class>
+</library>

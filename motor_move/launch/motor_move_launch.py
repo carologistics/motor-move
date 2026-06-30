@@ -37,16 +37,9 @@ def generate_launch_description():
     # Launch configurations
     use_sim_time = LaunchConfiguration("use_sim_time")
     namespace = LaunchConfiguration("namespace")
-    enable_tuning_log = LaunchConfiguration("enable_tuning_log")
-    enable_live_tuning = LaunchConfiguration("enable_live_tuning")
-    tuning_remote_target = LaunchConfiguration("tuning_remote_target")
-
     # Parameter substitutions dictionary
     param_substitutions = {
         "use_sim_time": use_sim_time,
-        "enable_tuning_log": enable_tuning_log,
-        "enable_live_tuning": enable_live_tuning,
-        "tuning_remote_target": tuning_remote_target,
     }
 
     # Create temporary YAML with substitutions
@@ -70,20 +63,6 @@ def generate_launch_description():
         "namespace", default_value="/", description="Namespace for the MotorMove node."  # default to the root namespace
     )
 
-    enable_tuning_log_arg = DeclareLaunchArgument(
-        "enable_tuning_log", default_value="false", description="Enable CSV logging of PID data for tuning analysis"
-    )
-
-    enable_live_tuning_arg = DeclareLaunchArgument(
-        "enable_live_tuning", default_value="false", description="Enable live PID parameter tuning via ros2 param set"
-    )
-
-    tuning_remote_target_arg = DeclareLaunchArgument(
-        "tuning_remote_target",
-        default_value="",
-        description="Remote SCP target for auto-transfer (e.g. sam@192.168.1.100:/home/sam/ros2/pid_tuning)",
-    )
-
     # Node definition
     motor_move_node = Node(
         package="motor_move",
@@ -98,9 +77,6 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             namespace_arg,
-            enable_tuning_log_arg,
-            enable_live_tuning_arg,
-            tuning_remote_target_arg,
             motor_move_node,
         ]
     )

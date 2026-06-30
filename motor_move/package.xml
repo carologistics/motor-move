@@ -3,7 +3,7 @@
 <package format="3">
   <name>motor_move</name>
   <version>0.0.0</version>
-  <description>ROS2 Action Server for precise robot movement control using MIMO-PID controller</description>
+  <description>ROS 2 action server for simple closed-loop robot movement</description>
   <maintainer email="tim.wendt@alumni.fh-aachen.de">timwendt</maintainer>
   <license>GPL-2.0</license>
 
