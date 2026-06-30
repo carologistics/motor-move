@@ -48,7 +48,7 @@ private:
   Eigen::MatrixXd position_prev;
   Eigen::MatrixXd derivative_filtered;
   bool first_run = true;
-  double d_filter_alpha_ = 0.3;
+  std::atomic<double> d_filter_alpha_ = 0.3;
 
   Eigen::VectorXd integral_min;
   Eigen::VectorXd integral_max;

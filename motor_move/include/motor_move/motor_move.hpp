@@ -53,7 +53,7 @@ private:
   PoseStamped target_pose_;
 
   PoseStamped
-  to_frame(const geometry_msgs::msg::PoseStamped::SharedPtr point_ptr,
+  to_frame(const geometry_msgs::msg::PoseStamped & point_ptr,
            std::string frame_id);
   void set_matrix_parameter(const std::string &name,
                             const Eigen::MatrixXd &matrix);
@@ -95,15 +95,20 @@ private:
   // =========================================================================
   // PID (can be toggled on/off)
   // =========================================================================
-  bool enable_pid_;
+  std::atomic<bool> enable_pid_;
+
+  std::atomic<double> timeout_seconds_;
+  std::atomic<double> loop_rate_;
+  std::atomic<double> yaw_tolerance_degrees_;
+  std::atomic<double> distance_tolerance_;
 
   // =========================================================================
   // FEEDFORWARD (Motion Profile) — always active
   // =========================================================================
-  double max_linear_velocity_;
-  double max_linear_acceleration_;
-  double max_angular_velocity_;
-  double max_angular_acceleration_;
+  std::atomic<double> max_linear_velocity_;
+  std::atomic<double> max_linear_acceleration_;
+  std::atomic<double> max_angular_velocity_;
+  std::atomic<double> max_angular_acceleration_;
 
   void init_tuning_logging();
   void log_pid_data(double timestamp, double error_x, double error_y,
