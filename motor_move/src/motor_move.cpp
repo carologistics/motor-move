@@ -55,12 +55,16 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   this->declare_parameter("linear_acceleration", 0.5);
   this->declare_parameter("max_angular_speed", 0.5);
   this->declare_parameter("angular_acceleration", 0.5);
+  this->declare_parameter("linear_kp", 1.0);
+  this->declare_parameter("angular_kp", 1.5);
 
   max_linear_speed_ = this->get_parameter("max_linear_speed").as_double();
   linear_acceleration_ = this->get_parameter("linear_acceleration").as_double();
 
   max_angular_speed_ = this->get_parameter("max_angular_speed").as_double();
   angular_acceleration_ = this->get_parameter("angular_acceleration").as_double();
+  linear_kp_ = this->get_parameter("linear_kp").as_double();
+  angular_kp_ = this->get_parameter("angular_kp").as_double();
 
   param_callback_handle_ = this->add_on_set_parameters_callback(
       std::bind(&MotorMove::on_parameter_change, this, std::placeholders::_1));
@@ -75,10 +79,12 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(this->get_logger(),
               "motor_move ready: odom_topic=odom base_frame=%s odom_frame=%s "
               "max_linear_speed=%.3f linear_acceleration=%.3f "
-              "max_angular_speed=%.3f angular_acceleration=%.3f",
+              "max_angular_speed=%.3f angular_acceleration=%.3f "
+              "linear_kp=%.3f angular_kp=%.3f",
               base_frame_.c_str(), odom_frame_.c_str(),
               max_linear_speed_.load(), linear_acceleration_.load(),
-              max_angular_speed_.load(), angular_acceleration_.load());
+              max_angular_speed_.load(), angular_acceleration_.load(),
+              linear_kp_.load(), angular_kp_.load());
 }
 
 rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
@@ -89,7 +95,8 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
   for (const auto &param : parameters) {
     const auto &name = param.get_name();
     if (name != "max_linear_speed" && name != "linear_acceleration" &&
-        name != "max_angular_speed" && name != "angular_acceleration") {
+        name != "max_angular_speed" && name != "angular_acceleration" &&
+        name != "linear_kp" && name != "angular_kp") {
       continue;
     }
     if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
@@ -122,6 +129,14 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
       angular_acceleration_ = param.as_double();
       RCLCPP_INFO(this->get_logger(), "angular_acceleration set to %.3f",
                   angular_acceleration_.load());
+    } else if (param.get_name() == "linear_kp") {
+      linear_kp_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "linear_kp set to %.3f",
+                  linear_kp_.load());
+    } else if (param.get_name() == "angular_kp") {
+      angular_kp_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "angular_kp set to %.3f",
+                  angular_kp_.load());
     }
   }
 
@@ -323,6 +338,8 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
 
   const double max_angular_speed = max_angular_speed_.load();
   const double angular_acceleration = angular_acceleration_.load();
+  const double linear_kp = linear_kp_.load();
+  const double angular_kp = angular_kp_.load();
 
   const bool rotate_first = abs_yaw_error > kYawToleranceRadians;
 
@@ -343,10 +360,15 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
         angular_speed_ = std::copysign(max_angular_speed, yaw_error);
       }
     } else {
+      const double profile_speed =
+          std::sqrt(2.0 * angular_acceleration * abs_yaw_error);
+      const double damping_speed = angular_kp * abs_yaw_error;
       angular_speed_ =
-          std::copysign(std::sqrt(2.0 * angular_acceleration * abs_yaw_error),
-                        yaw_error);
+          std::copysign(std::min(profile_speed, damping_speed), yaw_error);
     }
+    angular_speed_ = std::copysign(
+        std::min(std::fabs(angular_speed_), abs_yaw_error / dt),
+        angular_speed_);
 
     cmd.angular.z = angular_speed_;
   } else if (distance > kDistanceTolerance) {
@@ -359,8 +381,12 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
         linear_speed_ = max_linear_speed;
       }
     } else {
-      linear_speed_ = std::sqrt(2.0 * linear_acceleration * distance);
+      const double profile_speed =
+          std::sqrt(2.0 * linear_acceleration * distance);
+      const double damping_speed = linear_kp * distance;
+      linear_speed_ = std::min(profile_speed, damping_speed);
     }
+    linear_speed_ = std::min(linear_speed_, distance / dt);
 
     const double dir_x = dx / distance;
     const double dir_y = dy / distance;

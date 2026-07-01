@@ -42,6 +42,8 @@ private:
 
   std::atomic<double> max_angular_speed_;
   std::atomic<double> angular_acceleration_;
+  std::atomic<double> linear_kp_;
+  std::atomic<double> angular_kp_;
 
   std::mutex state_mutex_;
   bool have_odom_ = false;

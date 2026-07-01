@@ -22,6 +22,7 @@ Fields:
 | `X`, `Y`, `Rot` | Goal pose in that frame |
 | `Max linear`, `Linear accel` | Linear dynamic parameters sent with `ros2 param` semantics |
 | `Max angular`, `Angular accel` | Angular dynamic parameters sent with `ros2 param` semantics |
+| `Linear kp`, `Angular kp` | Proportional damping caps near the target |
 
 Changing any motion parameter sends a parameter update immediately after a
 short debounce. A checkmark is shown when the update succeeds.

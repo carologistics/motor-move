@@ -4,3 +4,5 @@
     linear_acceleration: 0.5
     max_angular_speed: 0.5
     angular_acceleration: 0.5
+    linear_kp: 1.0
+    angular_kp: 1.5

@@ -54,6 +54,8 @@ void MotorMovePanel::buildUi() {
   linear_acceleration_spin_ = new QDoubleSpinBox();
   max_angular_speed_spin_ = new QDoubleSpinBox();
   angular_acceleration_spin_ = new QDoubleSpinBox();
+  linear_kp_spin_ = new QDoubleSpinBox();
+  angular_kp_spin_ = new QDoubleSpinBox();
 
   for (auto *spin : {x_spin_, y_spin_}) {
     spin->setRange(-1000.0, 1000.0);
@@ -90,6 +92,16 @@ void MotorMovePanel::buildUi() {
   angular_acceleration_spin_->setValue(0.5);
   angular_acceleration_spin_->setSuffix(" rad/s^2");
 
+  linear_kp_spin_->setRange(0.001, 20.0);
+  linear_kp_spin_->setDecimals(3);
+  linear_kp_spin_->setSingleStep(0.1);
+  linear_kp_spin_->setValue(1.0);
+
+  angular_kp_spin_->setRange(0.001, 20.0);
+  angular_kp_spin_->setDecimals(3);
+  angular_kp_spin_->setSingleStep(0.1);
+  angular_kp_spin_->setValue(1.5);
+
   parameter_status_ = new QLabel("-");
   send_button_ = new QPushButton("Send");
   speed_plot_ = new PlotWidget();
@@ -123,8 +135,12 @@ void MotorMovePanel::buildUi() {
   motion_layout->addWidget(max_angular_speed_spin_, 2, 1);
   motion_layout->addWidget(new QLabel("Angular accel"), 3, 0);
   motion_layout->addWidget(angular_acceleration_spin_, 3, 1);
-  motion_layout->addWidget(parameter_status_, 4, 0);
-  motion_layout->addWidget(send_button_, 4, 1);
+  motion_layout->addWidget(new QLabel("Linear kp"), 4, 0);
+  motion_layout->addWidget(linear_kp_spin_, 4, 1);
+  motion_layout->addWidget(new QLabel("Angular kp"), 5, 0);
+  motion_layout->addWidget(angular_kp_spin_, 5, 1);
+  motion_layout->addWidget(parameter_status_, 6, 0);
+  motion_layout->addWidget(send_button_, 6, 1);
 
   auto *layout = new QVBoxLayout(this);
   layout->addWidget(connection_group);
@@ -151,6 +167,10 @@ void MotorMovePanel::buildUi() {
   connect(angular_acceleration_spin_,
           QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
           &MotorMovePanel::updatePreview);
+  connect(linear_kp_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &MotorMovePanel::updatePreview);
+  connect(angular_kp_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &MotorMovePanel::updatePreview);
   connect(max_linear_speed_spin_,
           QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
           &MotorMovePanel::scheduleParameterUpdate);
@@ -163,6 +183,10 @@ void MotorMovePanel::buildUi() {
   connect(angular_acceleration_spin_,
           QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
           &MotorMovePanel::scheduleParameterUpdate);
+  connect(linear_kp_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &MotorMovePanel::scheduleParameterUpdate);
+  connect(angular_kp_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &MotorMovePanel::scheduleParameterUpdate);
   connect(parameter_timer_, &QTimer::timeout, this,
           &MotorMovePanel::sendParameters);
   connect(send_button_, &QPushButton::clicked, this, &MotorMovePanel::sendGoal);
@@ -229,6 +253,8 @@ void MotorMovePanel::sendParameters() {
       rclcpp::Parameter("max_angular_speed", max_angular_speed_spin_->value()),
       rclcpp::Parameter("angular_acceleration",
                         angular_acceleration_spin_->value()),
+      rclcpp::Parameter("linear_kp", linear_kp_spin_->value()),
+      rclcpp::Parameter("angular_kp", angular_kp_spin_->value()),
   });
 
   std::thread([this, future = std::move(future)]() mutable {
@@ -284,6 +310,14 @@ void MotorMovePanel::sendGoal() {
   goal.motor_goal.pose.orientation.w = quat.w();
 
   rclcpp_action::Client<MotorMoveAction>::SendGoalOptions options;
+  options.goal_response_callback = [this](GoalHandleMotorMove::SharedPtr goal) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, accepted = static_cast<bool>(goal)]() {
+          setStatus(accepted ? "sent" : "rejected", accepted);
+        },
+        Qt::QueuedConnection);
+  };
   options.feedback_callback =
       [this](GoalHandleMotorMove::SharedPtr,
              const std::shared_ptr<const MotorMoveAction::Feedback> feedback) {
@@ -321,7 +355,7 @@ void MotorMovePanel::appendRealPoint(double time, double speed,
 }
 
 double MotorMovePanel::rotationTime(double yaw_error, double max_speed,
-                                    double acceleration) const {
+                                    double acceleration, double kp) const {
   constexpr double dt = 0.05;
   constexpr double tolerance = 2.0 * M_PI / 180.0;
   double time = 0.0;
@@ -329,7 +363,8 @@ double MotorMovePanel::rotationTime(double yaw_error, double max_speed,
   double speed = 0.0;
 
   for (int i = 0; i < 2000 && error > tolerance; ++i) {
-    const double target_speed = brakingSpeed(error, max_speed, acceleration);
+    const double target_speed =
+        std::min(brakingSpeed(error, max_speed, acceleration), kp * error);
     speed = rampToward(speed, target_speed, acceleration * dt);
     speed = std::min(speed, error / dt);
     error = std::max(0.0, error - speed * dt);
@@ -344,11 +379,14 @@ MotorMovePanel::makeIdealSpeed(double distance, double yaw_error,
                                double max_linear_speed,
                                double linear_acceleration,
                                double max_angular_speed,
-                               double angular_acceleration) const {
+                               double angular_acceleration, double linear_kp,
+                               double angular_kp) const {
   std::vector<QPointF> points;
   constexpr double dt = 0.05;
   constexpr double tolerance = 0.02;
-  double time = rotationTime(yaw_error, max_angular_speed, angular_acceleration);
+  double time =
+      rotationTime(yaw_error, max_angular_speed, angular_acceleration,
+                   angular_kp);
   double error = std::max(0.0, distance);
   double speed = 0.0;
 
@@ -358,7 +396,8 @@ MotorMovePanel::makeIdealSpeed(double distance, double yaw_error,
   }
   for (int i = 0; i < 2000 && error > tolerance; ++i) {
     const double target_speed =
-        brakingSpeed(error, max_linear_speed, linear_acceleration);
+        std::min(brakingSpeed(error, max_linear_speed, linear_acceleration),
+                 linear_kp * error);
     speed = rampToward(speed, target_speed, linear_acceleration * dt);
     speed = std::min(speed, error / dt);
     error = std::max(0.0, error - speed * dt);
@@ -374,11 +413,14 @@ MotorMovePanel::makeIdealError(double distance, double yaw_error,
                                double max_linear_speed,
                                double linear_acceleration,
                                double max_angular_speed,
-                               double angular_acceleration) const {
+                               double angular_acceleration, double linear_kp,
+                               double angular_kp) const {
   std::vector<QPointF> points;
   constexpr double dt = 0.05;
   constexpr double tolerance = 0.02;
-  double time = rotationTime(yaw_error, max_angular_speed, angular_acceleration);
+  double time =
+      rotationTime(yaw_error, max_angular_speed, angular_acceleration,
+                   angular_kp);
   double error = std::max(0.0, distance);
   double speed = 0.0;
 
@@ -388,7 +430,8 @@ MotorMovePanel::makeIdealError(double distance, double yaw_error,
   }
   for (int i = 0; i < 2000 && error > tolerance; ++i) {
     const double target_speed =
-        brakingSpeed(error, max_linear_speed, linear_acceleration);
+        std::min(brakingSpeed(error, max_linear_speed, linear_acceleration),
+                 linear_kp * error);
     speed = rampToward(speed, target_speed, linear_acceleration * dt);
     speed = std::min(speed, error / dt);
     error = std::max(0.0, error - speed * dt);
@@ -406,13 +449,15 @@ void MotorMovePanel::updatePreview() {
   const double linear_acceleration = linear_acceleration_spin_->value();
   const double max_angular_speed = max_angular_speed_spin_->value();
   const double angular_acceleration = angular_acceleration_spin_->value();
+  const double linear_kp = linear_kp_spin_->value();
+  const double angular_kp = angular_kp_spin_->value();
 
   speed_plot_->setIdealData(makeIdealSpeed(
       distance, yaw_error, max_linear_speed, linear_acceleration,
-      max_angular_speed, angular_acceleration));
+      max_angular_speed, angular_acceleration, linear_kp, angular_kp));
   error_plot_->setIdealData(makeIdealError(
       distance, yaw_error, max_linear_speed, linear_acceleration,
-      max_angular_speed, angular_acceleration));
+      max_angular_speed, angular_acceleration, linear_kp, angular_kp));
   Q_EMIT configChanged();
 }
 
@@ -450,6 +495,12 @@ void MotorMovePanel::load(const rviz_common::Config &config) {
   if (config.mapGetFloat("AngularAcceleration", &value)) {
     angular_acceleration_spin_->setValue(value);
   }
+  if (config.mapGetFloat("LinearKp", &value)) {
+    linear_kp_spin_->setValue(value);
+  }
+  if (config.mapGetFloat("AngularKp", &value)) {
+    angular_kp_spin_->setValue(value);
+  }
   updatePreview();
 }
 
@@ -469,6 +520,9 @@ void MotorMovePanel::save(rviz_common::Config config) const {
                      static_cast<float>(max_angular_speed_spin_->value()));
   config.mapSetValue("AngularAcceleration",
                      static_cast<float>(angular_acceleration_spin_->value()));
+  config.mapSetValue("LinearKp", static_cast<float>(linear_kp_spin_->value()));
+  config.mapSetValue("AngularKp",
+                     static_cast<float>(angular_kp_spin_->value()));
 }
 
 } // namespace motor_move_rviz_plugin
