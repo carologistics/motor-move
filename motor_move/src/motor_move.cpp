@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 
@@ -57,6 +58,9 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   base_frame_ = frame_with_namespace(namespace_, "base_link");
 
   cmd_vel_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
+  target_marker_pub_ =
+      this->create_publisher<visualization_msgs::msg::Marker>("target_marker",
+                                                              10);
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       "odom", rclcpp::SensorDataQoS(),
       std::bind(&MotorMove::odom_callback, this, std::placeholders::_1));
@@ -206,6 +210,33 @@ void MotorMove::publish_stop() {
   cmd_vel_->publish(geometry_msgs::msg::Twist{});
 }
 
+void MotorMove::publish_target_marker() {
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = odom_frame_;
+  marker.header.stamp = this->now();
+  marker.ns = "motor_move_target";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::ARROW;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  marker.pose.position.x = target_x_;
+  marker.pose.position.y = target_y_;
+  marker.pose.position.z = 0.05;
+
+  tf2::Quaternion orientation;
+  orientation.setRPY(0.0, 0.0, target_yaw_);
+  marker.pose.orientation = tf2::toMsg(orientation);
+
+  marker.scale.x = 0.4;
+  marker.scale.y = 0.08;
+  marker.scale.z = 0.12;
+  marker.color.r = 0.0F;
+  marker.color.g = 0.8F;
+  marker.color.b = 1.0F;
+  marker.color.a = 1.0F;
+
+  target_marker_pub_->publish(marker);
+}
+
 void MotorMove::clear_active_goal() {
   active_goal_.reset();
   linear_speed_ = 0.0;
@@ -289,6 +320,7 @@ void MotorMove::handle_accepted(
   RCLCPP_INFO(this->get_logger(),
               "Stored odom target: x=%.3f y=%.3f yaw=%.3f", target_x_,
               target_y_, target_yaw_);
+  publish_target_marker();
 }
 
 void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {

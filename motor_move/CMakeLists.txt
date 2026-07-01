@@ -15,6 +15,7 @@ find_package(motor_move_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 add_executable(${PROJECT_NAME} src/motor_move.cpp)
 
@@ -31,6 +32,7 @@ ament_target_dependencies(${PROJECT_NAME}
   tf2
   tf2_geometry_msgs
   tf2_ros
+  visualization_msgs
 )
 install(TARGETS ${PROJECT_NAME} DESTINATION lib/${PROJECT_NAME})
 # Install include directory

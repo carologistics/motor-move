@@ -14,6 +14,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <visualization_msgs/msg/marker.hpp>
 
 #include <mutex>
 
@@ -30,6 +31,8 @@ public:
 
 private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
+      target_marker_pub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp_action::Server<MotorMoveAction>::SharedPtr action_server_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
@@ -79,6 +82,7 @@ private:
   bool goal_to_odom(const PoseStamped &goal, double &x, double &y,
                     double &yaw);
   bool frame_is(const std::string &frame, const std::string &expected) const;
+  void publish_target_marker();
   void publish_stop();
   void clear_active_goal();
 };
