@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <thread>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -18,6 +19,8 @@ constexpr double kLoopRateHz = 20.0;
 constexpr double kTimeoutSeconds = 10.0;
 constexpr double kDistanceTolerance = 0.02;
 constexpr double kYawToleranceRadians = 2.0 * M_PI / 180.0;
+constexpr double kDriveAwayDistance = 0.15;
+constexpr int kDriveAwayCycles = 20;
 
 double normalize_angle(double angle) {
   while (angle > M_PI) {
@@ -200,6 +203,8 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
   rclcpp::Time last_time = start_time;
   double linear_speed = 0.0;
   double angular_speed = 0.0;
+  double best_distance = std::numeric_limits<double>::infinity();
+  int drive_away_cycles = 0;
   const double target_x = target_pose.pose.position.x;
   const double target_y = target_pose.pose.position.y;
   const double target_yaw = tf2::getYaw(target_pose.pose.orientation);
@@ -250,6 +255,33 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
     feedback->distance_to_target = static_cast<float>(distance);
     feedback->yaw_error = static_cast<float>(abs_yaw_error);
     feedback->elapsed_time = static_cast<float>((now - start_time).seconds());
+
+    if (distance < best_distance) {
+      best_distance = distance;
+      drive_away_cycles = 0;
+    } else if (distance > best_distance + kDriveAwayDistance) {
+      ++drive_away_cycles;
+    } else {
+      drive_away_cycles = 0;
+    }
+
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 500,
+        "odom target=(%.3f, %.3f, %.3f) current=(%.3f, %.3f, %.3f) "
+        "error=(%.3f, %.3f, %.3f) distance=%.3f",
+        target_x, target_y, target_yaw, current_x, current_y, current_yaw, dx,
+        dy, yaw_error, distance);
+
+    if (drive_away_cycles >= kDriveAwayCycles) {
+      publish_stop();
+      result->success = false;
+      goal_handle->abort(result);
+      RCLCPP_ERROR(this->get_logger(),
+                   "Aborting: odom distance is increasing. best=%.3f "
+                   "current=%.3f. Check odom/base_link TF and cmd_vel signs.",
+                   best_distance, distance);
+      return;
+    }
 
     if (distance <= kDistanceTolerance &&
         abs_yaw_error <= kYawToleranceRadians) {
