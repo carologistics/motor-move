@@ -4,24 +4,15 @@
 
 #include "motor_move/motor_move.hpp"
 
-#include "tf2/utils.h"
-
 #include <algorithm>
 #include <cmath>
-#include <limits>
-#include <thread>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace motor_move {
 namespace {
 
-constexpr double kLoopRateHz = 20.0;
 constexpr double kTimeoutSeconds = 10.0;
 constexpr double kDistanceTolerance = 0.02;
 constexpr double kYawToleranceRadians = 2.0 * M_PI / 180.0;
-constexpr double kDriveAwayDistance = 0.15;
-constexpr int kDriveAwayCycles = 20;
-constexpr int kMaxBadTfCycles = 20;
 
 double normalize_angle(double angle) {
   while (angle > M_PI) {
@@ -47,6 +38,12 @@ double braking_speed(double error, double max_speed, double acceleration) {
   return std::min(max_speed, std::sqrt(2.0 * acceleration * error));
 }
 
+double yaw_from_quaternion(const geometry_msgs::msg::Quaternion &q) {
+  const double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
+  const double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+  return std::atan2(siny_cosp, cosy_cosp);
+}
+
 std::string frame_with_namespace(const std::string &ns,
                                  const std::string &frame) {
   if (ns == "/" || ns.empty()) {
@@ -64,8 +61,9 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   base_frame_ = frame_with_namespace(namespace_, "base_link");
 
   cmd_vel_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
-  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+      "odom", rclcpp::SensorDataQoS(),
+      std::bind(&MotorMove::odom_callback, this, std::placeholders::_1));
 
   this->declare_parameter("max_speed", 0.5);
   this->declare_parameter("acceleration", 0.5);
@@ -84,8 +82,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
       std::bind(&MotorMove::handle_accepted, this, std::placeholders::_1));
 
   RCLCPP_INFO(this->get_logger(),
-              "motor_move ready: base_frame=%s odom_frame=%s max_speed=%.3f "
-              "acceleration=%.3f",
+              "motor_move ready: odom_topic=odom base_frame=%s odom_frame=%s "
+              "max_speed=%.3f acceleration=%.3f",
               base_frame_.c_str(), odom_frame_.c_str(), max_speed_.load(),
               acceleration_.load());
 }
@@ -100,7 +98,6 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
     if (name != "max_speed" && name != "acceleration") {
       continue;
     }
-
     if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
       result.successful = false;
       result.reason = name + " must be a double";
@@ -128,21 +125,47 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
   return result;
 }
 
-PoseStamped MotorMove::transform_to_odom(const PoseStamped &pose) {
-  PoseStamped target = pose;
-  if (target.header.frame_id.empty()) {
-    target.header.frame_id = base_frame_;
-  }
-  target.header.stamp = rclcpp::Time(0);
+bool MotorMove::frame_is(const std::string &frame,
+                         const std::string &expected) const {
+  return frame == expected || frame == "/" + expected ||
+         frame == expected.substr(expected.find_last_of('/') + 1);
+}
 
-  PoseStamped transformed;
-  tf_buffer_->transform(target, transformed, odom_frame_);
-  transformed.header.stamp = rclcpp::Time(0);
-  return transformed;
+bool MotorMove::goal_to_odom(const PoseStamped &goal, double &x, double &y,
+                             double &yaw) const {
+  const std::string frame =
+      goal.header.frame_id.empty() ? base_frame_ : goal.header.frame_id;
+  const double goal_yaw = yaw_from_quaternion(goal.pose.orientation);
+
+  if (frame_is(frame, odom_frame_)) {
+    x = goal.pose.position.x;
+    y = goal.pose.position.y;
+    yaw = goal_yaw;
+    return true;
+  }
+
+  if (frame_is(frame, base_frame_)) {
+    const double cos_yaw = std::cos(current_yaw_);
+    const double sin_yaw = std::sin(current_yaw_);
+    x = current_x_ + cos_yaw * goal.pose.position.x -
+        sin_yaw * goal.pose.position.y;
+    y = current_y_ + sin_yaw * goal.pose.position.x +
+        cos_yaw * goal.pose.position.y;
+    yaw = normalize_angle(current_yaw_ + goal_yaw);
+    return true;
+  }
+
+  return false;
 }
 
 void MotorMove::publish_stop() {
   cmd_vel_->publish(geometry_msgs::msg::Twist{});
+}
+
+void MotorMove::clear_active_goal() {
+  active_goal_.reset();
+  linear_speed_ = 0.0;
+  angular_speed_ = 0.0;
 }
 
 rclcpp_action::GoalResponse
@@ -150,243 +173,193 @@ MotorMove::handle_goal(const rclcpp_action::GoalUUID &uuid,
                        std::shared_ptr<const MotorMoveAction::Goal> goal) {
   (void)uuid;
 
-  const auto &pose = goal->motor_goal;
-  const std::string frame =
-      pose.header.frame_id.empty() ? base_frame_ : pose.header.frame_id;
-  RCLCPP_INFO(this->get_logger(),
-              "Received motor move goal in frame '%s': x=%.3f y=%.3f yaw=%.3f",
-              frame.c_str(), pose.pose.position.x, pose.pose.position.y,
-              tf2::getYaw(pose.pose.orientation));
-
-  try {
-    (void)transform_to_odom(pose);
-  } catch (const tf2::TransformException &ex) {
-    RCLCPP_ERROR(this->get_logger(), "Rejecting goal: %s", ex.what());
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (!have_odom_) {
+    RCLCPP_WARN(this->get_logger(), "Rejecting goal: no odom received yet");
     return rclcpp_action::GoalResponse::REJECT;
   }
 
+  double x = 0.0;
+  double y = 0.0;
+  double yaw = 0.0;
+  if (!goal_to_odom(goal->motor_goal, x, y, yaw)) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Rejecting goal: frame '%s' is not supported. Use '%s' or "
+                 "'%s'.",
+                 goal->motor_goal.header.frame_id.c_str(), odom_frame_.c_str(),
+                 base_frame_.c_str());
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+
+  RCLCPP_INFO(this->get_logger(),
+              "Accepted goal request in frame '%s': odom target=(%.3f, %.3f, "
+              "%.3f)",
+              goal->motor_goal.header.frame_id.c_str(), x, y, yaw);
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
 rclcpp_action::CancelResponse MotorMove::handle_cancel(
     const std::shared_ptr<GoalHandleMotorMove> goal_handle) {
-  (void)goal_handle;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (active_goal_ == goal_handle) {
+    publish_stop();
+  }
   RCLCPP_INFO(this->get_logger(), "Cancel requested");
   return rclcpp_action::CancelResponse::ACCEPT;
 }
 
 void MotorMove::handle_accepted(
     const std::shared_ptr<GoalHandleMotorMove> goal_handle) {
-  PoseStamped target_pose;
-  try {
-    target_pose = transform_to_odom(goal_handle->get_goal()->motor_goal);
-  } catch (const tf2::TransformException &ex) {
-    auto result = std::make_shared<MotorMoveAction::Result>();
+  auto result = std::make_shared<MotorMoveAction::Result>();
+  std::lock_guard<std::mutex> lock(state_mutex_);
+
+  if (!have_odom_) {
     result->success = false;
     goal_handle->abort(result);
-    RCLCPP_ERROR(this->get_logger(), "Could not start goal: %s", ex.what());
+    RCLCPP_ERROR(this->get_logger(), "Could not start goal: no odom");
     return;
   }
 
-  std::thread{std::bind(&MotorMove::execute, this, std::placeholders::_1,
-                        target_pose),
-              goal_handle}
-      .detach();
+  double x = 0.0;
+  double y = 0.0;
+  double yaw = 0.0;
+  if (!goal_to_odom(goal_handle->get_goal()->motor_goal, x, y, yaw)) {
+    result->success = false;
+    goal_handle->abort(result);
+    return;
+  }
+
+  if (active_goal_) {
+    auto previous_result = std::make_shared<MotorMoveAction::Result>();
+    previous_result->success = false;
+    active_goal_->abort(previous_result);
+  }
+
+  active_goal_ = goal_handle;
+  target_x_ = x;
+  target_y_ = y;
+  target_yaw_ = yaw;
+  linear_speed_ = 0.0;
+  angular_speed_ = 0.0;
+  goal_start_time_ = this->now();
+  last_control_time_ = goal_start_time_;
+
+  RCLCPP_INFO(this->get_logger(),
+              "Stored odom target: x=%.3f y=%.3f yaw=%.3f", target_x_,
+              target_y_, target_yaw_);
 }
 
-void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
-                        PoseStamped target_pose) {
+void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+
+  current_x_ = msg->pose.pose.position.x;
+  current_y_ = msg->pose.pose.position.y;
+  current_yaw_ = yaw_from_quaternion(msg->pose.pose.orientation);
+  have_odom_ = true;
+
+  if (!active_goal_) {
+    return;
+  }
+
   auto feedback = std::make_shared<MotorMoveAction::Feedback>();
   auto result = std::make_shared<MotorMoveAction::Result>();
 
-  rclcpp::Rate rate(kLoopRateHz);
-  rclcpp::Time start_time = this->now();
-  rclcpp::Time last_time = start_time;
-  double linear_speed = 0.0;
-  double angular_speed = 0.0;
-  double best_distance = std::numeric_limits<double>::infinity();
-  int drive_away_cycles = 0;
-  int bad_tf_cycles = 0;
-  bool have_last_pose = false;
-  double last_x = 0.0;
-  double last_y = 0.0;
-  double last_yaw = 0.0;
-  const double target_x = target_pose.pose.position.x;
-  const double target_y = target_pose.pose.position.y;
-  const double target_yaw = tf2::getYaw(target_pose.pose.orientation);
+  if (active_goal_->is_canceling()) {
+    publish_stop();
+    result->success = false;
+    active_goal_->canceled(result);
+    clear_active_goal();
+    return;
+  }
 
-  RCLCPP_INFO(this->get_logger(),
-              "Stored target in odom: x=%.3f y=%.3f yaw=%.3f",
-              target_x, target_y, target_yaw);
+  const rclcpp::Time now = this->now();
+  if ((now - goal_start_time_).seconds() > kTimeoutSeconds) {
+    publish_stop();
+    result->success = false;
+    active_goal_->abort(result);
+    clear_active_goal();
+    RCLCPP_WARN(this->get_logger(), "Goal timed out");
+    return;
+  }
 
-  while (rclcpp::ok()) {
-    if (goal_handle->is_canceling()) {
-      publish_stop();
-      result->success = false;
-      goal_handle->canceled(result);
-      return;
-    }
+  double dt = (now - last_control_time_).seconds();
+  if (dt <= 0.0 || dt > 1.0) {
+    dt = 0.05;
+  }
+  last_control_time_ = now;
 
-    const rclcpp::Time now = this->now();
-    if ((now - start_time).seconds() > kTimeoutSeconds) {
-      publish_stop();
-      result->success = false;
-      goal_handle->abort(result);
-      RCLCPP_WARN(this->get_logger(), "Goal timed out");
-      return;
-    }
+  const double dx = target_x_ - current_x_;
+  const double dy = target_y_ - current_y_;
+  const double distance = std::hypot(dx, dy);
+  const double yaw_error = normalize_angle(target_yaw_ - current_yaw_);
+  const double abs_yaw_error = std::fabs(yaw_error);
 
-    geometry_msgs::msg::TransformStamped current_tf;
-    try {
-      current_tf =
-          tf_buffer_->lookupTransform(odom_frame_, base_frame_,
-                                      tf2::TimePointZero);
-    } catch (const tf2::TransformException &ex) {
-      publish_stop();
-      result->success = false;
-      goal_handle->abort(result);
-      RCLCPP_ERROR(this->get_logger(), "Odom lookup failed: %s", ex.what());
-      return;
-    }
+  feedback->distance_to_target = static_cast<float>(distance);
+  feedback->yaw_error = static_cast<float>(abs_yaw_error);
+  feedback->elapsed_time = static_cast<float>((now - goal_start_time_).seconds());
 
-    const double current_x = current_tf.transform.translation.x;
-    const double current_y = current_tf.transform.translation.y;
-    const double current_yaw = tf2::getYaw(current_tf.transform.rotation);
+  RCLCPP_INFO_THROTTLE(
+      this->get_logger(), *this->get_clock(), 500,
+      "odom target=(%.3f, %.3f, %.3f) current=(%.3f, %.3f, %.3f) "
+      "error=(%.3f, %.3f, %.3f) distance=%.3f",
+      target_x_, target_y_, target_yaw_, current_x_, current_y_, current_yaw_,
+      dx, dy, yaw_error, distance);
 
-    double dt = (now - last_time).seconds();
-    if (dt <= 0.0 || dt > 1.0) {
-      dt = 1.0 / kLoopRateHz;
-    }
+  if (distance <= kDistanceTolerance && abs_yaw_error <= kYawToleranceRadians) {
+    publish_stop();
+    result->success = true;
+    active_goal_->succeed(result);
+    clear_active_goal();
+    RCLCPP_INFO(this->get_logger(), "Goal reached");
+    return;
+  }
 
-    if (have_last_pose) {
-      const double pose_jump = std::hypot(current_x - last_x, current_y - last_y);
-      const double yaw_jump = std::fabs(normalize_angle(current_yaw - last_yaw));
-      const double allowed_jump =
-          std::max(0.25, max_speed_.load() * dt * 6.0 + 0.05);
-      if (pose_jump > allowed_jump || yaw_jump > 0.8) {
-        ++bad_tf_cycles;
-        publish_stop();
-        RCLCPP_WARN_THROTTLE(
-            this->get_logger(), *this->get_clock(), 500,
-            "Ignoring impossible odom jump: dpos=%.3f dyaw=%.3f "
-            "allowed=%.3f",
-            pose_jump, yaw_jump, allowed_jump);
-        if (bad_tf_cycles >= kMaxBadTfCycles) {
-          result->success = false;
-          goal_handle->abort(result);
-          RCLCPP_ERROR(this->get_logger(),
-                       "Aborting: repeated impossible odom jumps. Check TF "
-                       "publishers for %s -> %s.",
-                       odom_frame_.c_str(), base_frame_.c_str());
-          return;
-        }
-        rate.sleep();
-        continue;
-      }
-    }
+  const double max_speed = max_speed_.load();
+  const double acceleration = acceleration_.load();
+  const double max_delta = acceleration * dt;
+  const bool rotate_first = abs_yaw_error > kYawToleranceRadians;
 
-    have_last_pose = true;
-    last_x = current_x;
-    last_y = current_y;
-    last_yaw = current_yaw;
-    bad_tf_cycles = 0;
+  geometry_msgs::msg::Twist cmd;
 
-    const double dx = target_x - current_x;
-    const double dy = target_y - current_y;
-    const double distance = std::hypot(dx, dy);
-    const double yaw_error = normalize_angle(target_yaw - current_yaw);
-    const double abs_yaw_error = std::fabs(yaw_error);
-
-    feedback->distance_to_target = static_cast<float>(distance);
-    feedback->yaw_error = static_cast<float>(abs_yaw_error);
-    feedback->elapsed_time = static_cast<float>((now - start_time).seconds());
-
-    if (distance < best_distance) {
-      best_distance = distance;
-      drive_away_cycles = 0;
-    } else if (distance > best_distance + kDriveAwayDistance) {
-      ++drive_away_cycles;
-    } else {
-      drive_away_cycles = 0;
-    }
-
-    RCLCPP_INFO_THROTTLE(
-        this->get_logger(), *this->get_clock(), 500,
-        "odom target=(%.3f, %.3f, %.3f) current=(%.3f, %.3f, %.3f) "
-        "error=(%.3f, %.3f, %.3f) distance=%.3f",
-        target_x, target_y, target_yaw, current_x, current_y, current_yaw, dx,
-        dy, yaw_error, distance);
-
-    if (drive_away_cycles >= kDriveAwayCycles) {
-      publish_stop();
-      result->success = false;
-      goal_handle->abort(result);
-      RCLCPP_ERROR(this->get_logger(),
-                   "Aborting: odom distance is increasing. best=%.3f "
-                   "current=%.3f. Check odom/base_link TF and cmd_vel signs.",
-                   best_distance, distance);
-      return;
-    }
-
-    if (distance <= kDistanceTolerance &&
-        abs_yaw_error <= kYawToleranceRadians) {
-      publish_stop();
-      result->success = true;
-      goal_handle->succeed(result);
-      RCLCPP_INFO(this->get_logger(), "Goal reached");
-      return;
-    }
-
-    last_time = now;
-
-    const double max_speed = max_speed_.load();
-    const double acceleration = acceleration_.load();
-    const double max_delta = acceleration * dt;
-
-    const double target_linear_speed =
-        braking_speed(distance, max_speed, acceleration);
-    linear_speed = ramp_toward(linear_speed, target_linear_speed, max_delta);
-    linear_speed = std::min(linear_speed, distance / dt);
+  if (rotate_first) {
+    linear_speed_ = 0.0;
 
     const double target_angular_speed =
         std::copysign(braking_speed(abs_yaw_error, max_speed, acceleration),
                       yaw_error);
-    angular_speed = ramp_toward(angular_speed, target_angular_speed, max_delta);
-    if (abs_yaw_error > 0.0) {
-      angular_speed =
-          std::copysign(std::min(std::fabs(angular_speed), abs_yaw_error / dt),
-                        angular_speed);
-    }
+    angular_speed_ =
+        ramp_toward(angular_speed_, target_angular_speed, max_delta);
+    angular_speed_ =
+        std::copysign(std::min(std::fabs(angular_speed_), abs_yaw_error / dt),
+                      angular_speed_);
+    cmd.angular.z = angular_speed_;
+  } else if (distance > kDistanceTolerance) {
+    angular_speed_ = 0.0;
 
-    const double vx_odom =
-        distance > kDistanceTolerance ? linear_speed * dx / distance : 0.0;
-    const double vy_odom =
-        distance > kDistanceTolerance ? linear_speed * dy / distance : 0.0;
+    const double target_linear_speed =
+        braking_speed(distance, max_speed, acceleration);
+    linear_speed_ = ramp_toward(linear_speed_, target_linear_speed, max_delta);
+    linear_speed_ = std::min(linear_speed_, distance / dt);
 
-    const double cos_yaw = std::cos(current_yaw);
-    const double sin_yaw = std::sin(current_yaw);
+    const double vx_odom = linear_speed_ * dx / distance;
+    const double vy_odom = linear_speed_ * dy / distance;
 
-    geometry_msgs::msg::Twist cmd;
-    if (distance > kDistanceTolerance) {
-      cmd.linear.x = cos_yaw * vx_odom + sin_yaw * vy_odom;
-      cmd.linear.y = -sin_yaw * vx_odom + cos_yaw * vy_odom;
-    }
-    if (abs_yaw_error > kYawToleranceRadians) {
-      cmd.angular.z = angular_speed;
-    }
+    const double cos_yaw = std::cos(current_yaw_);
+    const double sin_yaw = std::sin(current_yaw_);
 
-    feedback->linear_speed = static_cast<float>(
-        std::hypot(cmd.linear.x, cmd.linear.y));
-    feedback->angular_speed = static_cast<float>(std::fabs(cmd.angular.z));
-    goal_handle->publish_feedback(feedback);
-
-    cmd_vel_->publish(cmd);
-    rate.sleep();
+    cmd.linear.x = cos_yaw * vx_odom + sin_yaw * vy_odom;
+    cmd.linear.y = -sin_yaw * vx_odom + cos_yaw * vy_odom;
+  } else {
+    linear_speed_ = 0.0;
+    angular_speed_ = 0.0;
   }
 
-  publish_stop();
-  result->success = false;
-  goal_handle->abort(result);
+  feedback->linear_speed =
+      static_cast<float>(std::hypot(cmd.linear.x, cmd.linear.y));
+  feedback->angular_speed = static_cast<float>(std::fabs(cmd.angular.z));
+  active_goal_->publish_feedback(feedback);
+
+  cmd_vel_->publish(cmd);
 }
 
 } // namespace motor_move

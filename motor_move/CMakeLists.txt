@@ -10,9 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(motor_move_msgs REQUIRED)
 
 add_executable(${PROJECT_NAME} src/motor_move.cpp)
@@ -25,12 +23,9 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   rclcpp_action
   geometry_msgs
+  nav_msgs
   motor_move_msgs
-  tf2_ros
-  tf2
-  tf2_geometry_msgs
 )
-target_link_libraries(${PROJECT_NAME} tf2::tf2 tf2_ros::tf2_ros)
 install(TARGETS ${PROJECT_NAME} DESTINATION lib/${PROJECT_NAME})
 # Install include directory
 install(DIRECTORY include/ DESTINATION include/)
