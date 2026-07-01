@@ -21,6 +21,7 @@ constexpr double kDistanceTolerance = 0.02;
 constexpr double kYawToleranceRadians = 2.0 * M_PI / 180.0;
 constexpr double kDriveAwayDistance = 0.15;
 constexpr int kDriveAwayCycles = 20;
+constexpr int kMaxBadTfCycles = 20;
 
 double normalize_angle(double angle) {
   while (angle > M_PI) {
@@ -205,6 +206,11 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
   double angular_speed = 0.0;
   double best_distance = std::numeric_limits<double>::infinity();
   int drive_away_cycles = 0;
+  int bad_tf_cycles = 0;
+  bool have_last_pose = false;
+  double last_x = 0.0;
+  double last_y = 0.0;
+  double last_yaw = 0.0;
   const double target_x = target_pose.pose.position.x;
   const double target_y = target_pose.pose.position.y;
   const double target_yaw = tf2::getYaw(target_pose.pose.orientation);
@@ -246,6 +252,45 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
     const double current_x = current_tf.transform.translation.x;
     const double current_y = current_tf.transform.translation.y;
     const double current_yaw = tf2::getYaw(current_tf.transform.rotation);
+
+    double dt = (now - last_time).seconds();
+    if (dt <= 0.0 || dt > 1.0) {
+      dt = 1.0 / kLoopRateHz;
+    }
+
+    if (have_last_pose) {
+      const double pose_jump = std::hypot(current_x - last_x, current_y - last_y);
+      const double yaw_jump = std::fabs(normalize_angle(current_yaw - last_yaw));
+      const double allowed_jump =
+          std::max(0.25, max_speed_.load() * dt * 6.0 + 0.05);
+      if (pose_jump > allowed_jump || yaw_jump > 0.8) {
+        ++bad_tf_cycles;
+        publish_stop();
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 500,
+            "Ignoring impossible odom jump: dpos=%.3f dyaw=%.3f "
+            "allowed=%.3f",
+            pose_jump, yaw_jump, allowed_jump);
+        if (bad_tf_cycles >= kMaxBadTfCycles) {
+          result->success = false;
+          goal_handle->abort(result);
+          RCLCPP_ERROR(this->get_logger(),
+                       "Aborting: repeated impossible odom jumps. Check TF "
+                       "publishers for %s -> %s.",
+                       odom_frame_.c_str(), base_frame_.c_str());
+          return;
+        }
+        rate.sleep();
+        continue;
+      }
+    }
+
+    have_last_pose = true;
+    last_x = current_x;
+    last_y = current_y;
+    last_yaw = current_yaw;
+    bad_tf_cycles = 0;
+
     const double dx = target_x - current_x;
     const double dy = target_y - current_y;
     const double distance = std::hypot(dx, dy);
@@ -292,10 +337,6 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
       return;
     }
 
-    double dt = (now - last_time).seconds();
-    if (dt <= 0.0 || dt > 1.0) {
-      dt = 1.0 / kLoopRateHz;
-    }
     last_time = now;
 
     const double max_speed = max_speed_.load();
@@ -305,11 +346,17 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
     const double target_linear_speed =
         braking_speed(distance, max_speed, acceleration);
     linear_speed = ramp_toward(linear_speed, target_linear_speed, max_delta);
+    linear_speed = std::min(linear_speed, distance / dt);
 
     const double target_angular_speed =
         std::copysign(braking_speed(abs_yaw_error, max_speed, acceleration),
                       yaw_error);
     angular_speed = ramp_toward(angular_speed, target_angular_speed, max_delta);
+    if (abs_yaw_error > 0.0) {
+      angular_speed =
+          std::copysign(std::min(std::fabs(angular_speed), abs_yaw_error / dt),
+                        angular_speed);
+    }
 
     const double vx_odom =
         distance > kDistanceTolerance ? linear_speed * dx / distance : 0.0;
