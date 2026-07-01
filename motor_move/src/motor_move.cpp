@@ -137,15 +137,6 @@ PoseStamped MotorMove::transform_to_odom(const PoseStamped &pose) {
   return transformed;
 }
 
-PoseStamped MotorMove::transform_to_base(const PoseStamped &pose) {
-  PoseStamped target = pose;
-  target.header.stamp = rclcpp::Time(0);
-
-  PoseStamped transformed;
-  tf_buffer_->transform(target, transformed, base_frame_);
-  return transformed;
-}
-
 void MotorMove::publish_stop() {
   cmd_vel_->publish(geometry_msgs::msg::Twist{});
 }
@@ -209,6 +200,13 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
   rclcpp::Time last_time = start_time;
   double linear_speed = 0.0;
   double angular_speed = 0.0;
+  const double target_x = target_pose.pose.position.x;
+  const double target_y = target_pose.pose.position.y;
+  const double target_yaw = tf2::getYaw(target_pose.pose.orientation);
+
+  RCLCPP_INFO(this->get_logger(),
+              "Stored target in odom: x=%.3f y=%.3f yaw=%.3f",
+              target_x, target_y, target_yaw);
 
   while (rclcpp::ok()) {
     if (goal_handle->is_canceling()) {
@@ -227,21 +225,26 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
       return;
     }
 
-    PoseStamped error;
+    geometry_msgs::msg::TransformStamped current_tf;
     try {
-      error = transform_to_base(target_pose);
+      current_tf =
+          tf_buffer_->lookupTransform(odom_frame_, base_frame_,
+                                      tf2::TimePointZero);
     } catch (const tf2::TransformException &ex) {
       publish_stop();
       result->success = false;
       goal_handle->abort(result);
-      RCLCPP_ERROR(this->get_logger(), "TF lookup failed: %s", ex.what());
+      RCLCPP_ERROR(this->get_logger(), "Odom lookup failed: %s", ex.what());
       return;
     }
 
-    const double dx = error.pose.position.x;
-    const double dy = error.pose.position.y;
+    const double current_x = current_tf.transform.translation.x;
+    const double current_y = current_tf.transform.translation.y;
+    const double current_yaw = tf2::getYaw(current_tf.transform.rotation);
+    const double dx = target_x - current_x;
+    const double dy = target_y - current_y;
     const double distance = std::hypot(dx, dy);
-    const double yaw_error = normalize_angle(tf2::getYaw(error.pose.orientation));
+    const double yaw_error = normalize_angle(target_yaw - current_yaw);
     const double abs_yaw_error = std::fabs(yaw_error);
 
     feedback->distance_to_target = static_cast<float>(distance);
@@ -276,10 +279,18 @@ void MotorMove::execute(const std::shared_ptr<GoalHandleMotorMove> goal_handle,
                       yaw_error);
     angular_speed = ramp_toward(angular_speed, target_angular_speed, max_delta);
 
+    const double vx_odom =
+        distance > kDistanceTolerance ? linear_speed * dx / distance : 0.0;
+    const double vy_odom =
+        distance > kDistanceTolerance ? linear_speed * dy / distance : 0.0;
+
+    const double cos_yaw = std::cos(current_yaw);
+    const double sin_yaw = std::sin(current_yaw);
+
     geometry_msgs::msg::Twist cmd;
     if (distance > kDistanceTolerance) {
-      cmd.linear.x = linear_speed * dx / distance;
-      cmd.linear.y = linear_speed * dy / distance;
+      cmd.linear.x = cos_yaw * vx_odom + sin_yaw * vy_odom;
+      cmd.linear.y = -sin_yaw * vx_odom + cos_yaw * vy_odom;
     }
     if (abs_yaw_error > kYawToleranceRadians) {
       cmd.angular.z = angular_speed;

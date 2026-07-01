@@ -55,7 +55,6 @@ private:
   on_parameter_change(const std::vector<rclcpp::Parameter> &parameters);
 
   PoseStamped transform_to_odom(const PoseStamped &pose);
-  PoseStamped transform_to_base(const PoseStamped &pose);
   void publish_stop();
 };
 
