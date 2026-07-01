@@ -17,10 +17,8 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration  # noqa: F401
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.descriptions import ParameterFile
-from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
@@ -37,22 +35,6 @@ def generate_launch_description():
     # Launch configurations
     use_sim_time = LaunchConfiguration("use_sim_time")
     namespace = LaunchConfiguration("namespace")
-    # Parameter substitutions dictionary
-    param_substitutions = {
-        "use_sim_time": use_sim_time,
-    }
-
-    # Create temporary YAML with substitutions
-    # Uses "/**" wildcard so YAML works with any namespace
-    configured_params = ParameterFile(
-        RewrittenYaml(
-            source_file=config,
-            root_key="/**",
-            param_rewrites=param_substitutions,
-            convert_types=True,
-        ),
-        allow_substs=True,
-    )
 
     # Declare launch arguments
     use_sim_time_arg = DeclareLaunchArgument(
@@ -60,7 +42,7 @@ def generate_launch_description():
     )
 
     namespace_arg = DeclareLaunchArgument(
-        "namespace", default_value="/", description="Namespace for the MotorMove node."  # default to the root namespace
+        "namespace", default_value="/robotinobase1", description="Namespace for the MotorMove node."
     )
 
     # Node definition
@@ -70,7 +52,7 @@ def generate_launch_description():
         namespace=namespace,
         name="motor_move",
         output="screen",
-        parameters=[configured_params],
+        parameters=[config, {"use_sim_time": use_sim_time}],
     )
 
     return LaunchDescription(
