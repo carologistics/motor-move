@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 # Generated interface packages in this ROS Kilted environment export this
 # dependency, but the package is not installed separately.
 set(fastrtps_cmake_module_FOUND TRUE)
@@ -35,6 +36,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
   ${geometry_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
   ${motor_move_msgs_TARGETS}
   ${rcl_interfaces_TARGETS}
   pluginlib::pluginlib
@@ -67,6 +69,7 @@ ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 ament_export_dependencies(
   geometry_msgs
+  nav_msgs
   motor_move_msgs
   pluginlib
   rclcpp

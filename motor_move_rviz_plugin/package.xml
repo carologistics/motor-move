@@ -13,6 +13,7 @@
 
   <depend>geometry_msgs</depend>
   <depend>motor_move_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>

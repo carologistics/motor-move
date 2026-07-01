@@ -45,6 +45,7 @@ MotorMovePanel::MotorMovePanel(QWidget *parent) : rviz_common::Panel(parent) {
 void MotorMovePanel::buildUi() {
   action_name_edit_ = new QLineEdit("/robotinobase1/motor_move_action");
   parameter_node_edit_ = new QLineEdit("/robotinobase1/motor_move");
+  odom_topic_edit_ = new QLineEdit("/robotinobase1/odom");
   frame_edit_ = new QLineEdit("robotinobase1/base_link");
 
   x_spin_ = new QDoubleSpinBox();
@@ -103,6 +104,7 @@ void MotorMovePanel::buildUi() {
   angular_kp_spin_->setValue(1.5);
 
   parameter_status_ = new QLabel("-");
+  traveled_distance_label_ = new QLabel("0.000 m");
   send_button_ = new QPushButton("Send");
   speed_plot_ = new PlotWidget();
   error_plot_ = new PlotWidget();
@@ -117,6 +119,7 @@ void MotorMovePanel::buildUi() {
   auto *connection_layout = new QFormLayout(connection_group);
   connection_layout->addRow("Action", action_name_edit_);
   connection_layout->addRow("Param node", parameter_node_edit_);
+  connection_layout->addRow("Odom", odom_topic_edit_);
 
   auto *target_group = new QGroupBox("Target");
   auto *target_layout = new QFormLayout(target_group);
@@ -139,8 +142,10 @@ void MotorMovePanel::buildUi() {
   motion_layout->addWidget(linear_kp_spin_, 4, 1);
   motion_layout->addWidget(new QLabel("Angular kp"), 5, 0);
   motion_layout->addWidget(angular_kp_spin_, 5, 1);
-  motion_layout->addWidget(parameter_status_, 6, 0);
-  motion_layout->addWidget(send_button_, 6, 1);
+  motion_layout->addWidget(new QLabel("Odom traveled"), 6, 0);
+  motion_layout->addWidget(traveled_distance_label_, 6, 1);
+  motion_layout->addWidget(parameter_status_, 7, 0);
+  motion_layout->addWidget(send_button_, 7, 1);
 
   auto *layout = new QVBoxLayout(this);
   layout->addWidget(connection_group);
@@ -208,6 +213,7 @@ void MotorMovePanel::setupRos() {
 
   node_ = abstraction->get_raw_node();
   refreshParameterClient();
+  refreshOdomSubscription();
   action_client_ = rclcpp_action::create_client<MotorMoveAction>(
       node_, action_name_edit_->text().toStdString());
 }
@@ -225,10 +231,59 @@ void MotorMovePanel::refreshParameterClient() {
       node_, current_parameter_node_.toStdString());
 }
 
+void MotorMovePanel::refreshOdomSubscription() {
+  if (!node_) {
+    return;
+  }
+  if (odom_sub_ && current_odom_topic_ == odom_topic_edit_->text()) {
+    return;
+  }
+  current_odom_topic_ = odom_topic_edit_->text();
+  odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+      current_odom_topic_.toStdString(), rclcpp::SensorDataQoS(),
+      std::bind(&MotorMovePanel::odomCallback, this, std::placeholders::_1));
+}
+
 void MotorMovePanel::setStatus(const QString &text, bool ok) {
   parameter_status_->setText((ok ? QString::fromUtf8("✓ ") : QString("! ")) +
                              text);
   parameter_status_->setStyleSheet(ok ? "color: #22863a;" : "color: #b31d28;");
+}
+
+void MotorMovePanel::resetTraveledDistance() {
+  std::lock_guard<std::mutex> lock(odom_mutex_);
+  tracking_distance_ = true;
+  have_last_odom_position_ = false;
+  traveled_distance_ = 0.0;
+  traveled_distance_label_->setText("0.000 m");
+}
+
+void MotorMovePanel::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  double traveled = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    if (!tracking_distance_) {
+      return;
+    }
+
+    const double x = msg->pose.pose.position.x;
+    const double y = msg->pose.pose.position.y;
+    if (have_last_odom_position_) {
+      traveled_distance_ += std::hypot(x - last_odom_x_, y - last_odom_y_);
+    }
+    last_odom_x_ = x;
+    last_odom_y_ = y;
+    have_last_odom_position_ = true;
+    traveled = traveled_distance_;
+  }
+
+  QMetaObject::invokeMethod(
+      this,
+      [this, traveled]() {
+        traveled_distance_label_->setText(
+            QString("%1 m").arg(traveled, 0, 'f', 3));
+      },
+      Qt::QueuedConnection);
 }
 
 void MotorMovePanel::scheduleParameterUpdate() {
@@ -283,8 +338,10 @@ void MotorMovePanel::sendGoal() {
   if (!node_) {
     setupRos();
   }
+  refreshOdomSubscription();
   action_client_ = rclcpp_action::create_client<MotorMoveAction>(
       node_, action_name_edit_->text().toStdString());
+  resetTraveledDistance();
 
   if (!action_client_->wait_for_action_server(std::chrono::milliseconds(500))) {
     setStatus("no action", false);
@@ -471,6 +528,9 @@ void MotorMovePanel::load(const rviz_common::Config &config) {
   if (config.mapGetString("ParameterNode", &text)) {
     parameter_node_edit_->setText(text);
   }
+  if (config.mapGetString("OdomTopic", &text)) {
+    odom_topic_edit_->setText(text);
+  }
   if (config.mapGetString("Frame", &text)) {
     frame_edit_->setText(text);
   }
@@ -508,6 +568,7 @@ void MotorMovePanel::save(rviz_common::Config config) const {
   rviz_common::Panel::save(config);
   config.mapSetValue("Action", action_name_edit_->text());
   config.mapSetValue("ParameterNode", parameter_node_edit_->text());
+  config.mapSetValue("OdomTopic", odom_topic_edit_->text());
   config.mapSetValue("Frame", frame_edit_->text());
   config.mapSetValue("X", static_cast<float>(x_spin_->value()));
   config.mapSetValue("Y", static_cast<float>(y_spin_->value()));
