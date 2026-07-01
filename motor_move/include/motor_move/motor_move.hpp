@@ -37,8 +37,11 @@ private:
   std::string base_frame_;
   std::string odom_frame_;
 
-  std::atomic<double> max_speed_;
-  std::atomic<double> acceleration_;
+  std::atomic<double> max_linear_speed_;
+  std::atomic<double> linear_acceleration_;
+
+  std::atomic<double> max_angular_speed_;
+  std::atomic<double> angular_acceleration_;
 
   std::mutex state_mutex_;
   bool have_odom_ = false;
@@ -54,6 +57,7 @@ private:
   double angular_speed_ = 0.0;
   rclcpp::Time goal_start_time_;
   rclcpp::Time last_control_time_;
+
 
   rclcpp_action::GoalResponse
   handle_goal(const rclcpp_action::GoalUUID &uuid,

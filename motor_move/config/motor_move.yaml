@@ -1,4 +1,6 @@
 /**:
   ros__parameters:
-    max_speed: 0.5
-    acceleration: 0.5
+    max_linear_speed: 0.5
+    linear_acceleration: 0.5
+    max_angular_speed: 0.5
+    angular_acceleration: 0.5

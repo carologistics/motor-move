@@ -44,10 +44,18 @@ private:
   void refreshParameterClient();
   void setStatus(const QString &text, bool ok);
   void appendRealPoint(double time, double speed, double distance);
-  std::vector<QPointF> makeIdealSpeed(double distance, double max_speed,
-                                      double acceleration) const;
-  std::vector<QPointF> makeIdealError(double distance, double max_speed,
-                                      double acceleration) const;
+  double rotationTime(double yaw_error, double max_speed,
+                      double acceleration) const;
+  std::vector<QPointF> makeIdealSpeed(double distance, double yaw_error,
+                                      double max_linear_speed,
+                                      double linear_acceleration,
+                                      double max_angular_speed,
+                                      double angular_acceleration) const;
+  std::vector<QPointF> makeIdealError(double distance, double yaw_error,
+                                      double max_linear_speed,
+                                      double linear_acceleration,
+                                      double max_angular_speed,
+                                      double angular_acceleration) const;
 
   rclcpp::Node::SharedPtr node_;
   rclcpp_action::Client<MotorMoveAction>::SharedPtr action_client_;
@@ -60,8 +68,10 @@ private:
   QDoubleSpinBox *x_spin_;
   QDoubleSpinBox *y_spin_;
   QDoubleSpinBox *yaw_spin_;
-  QDoubleSpinBox *max_speed_spin_;
-  QDoubleSpinBox *acceleration_spin_;
+  QDoubleSpinBox *max_linear_speed_spin_;
+  QDoubleSpinBox *linear_acceleration_spin_;
+  QDoubleSpinBox *max_angular_speed_spin_;
+  QDoubleSpinBox *angular_acceleration_spin_;
   QLabel *parameter_status_;
   QPushButton *send_button_;
   PlotWidget *speed_plot_;

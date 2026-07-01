@@ -24,20 +24,6 @@ double normalize_angle(double angle) {
   return angle;
 }
 
-double ramp_toward(double current, double target, double max_delta) {
-  if (target > current) {
-    return std::min(target, current + max_delta);
-  }
-  return std::max(target, current - max_delta);
-}
-
-double braking_speed(double error, double max_speed, double acceleration) {
-  if (error <= 0.0 || max_speed <= 0.0 || acceleration <= 0.0) {
-    return 0.0;
-  }
-  return std::min(max_speed, std::sqrt(2.0 * acceleration * error));
-}
-
 double yaw_from_quaternion(const geometry_msgs::msg::Quaternion &q) {
   const double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
   const double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
@@ -65,11 +51,16 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
       "odom", rclcpp::SensorDataQoS(),
       std::bind(&MotorMove::odom_callback, this, std::placeholders::_1));
 
-  this->declare_parameter("max_speed", 0.5);
-  this->declare_parameter("acceleration", 0.5);
+  this->declare_parameter("max_linear_speed", 0.5);
+  this->declare_parameter("linear_acceleration", 0.5);
+  this->declare_parameter("max_angular_speed", 0.5);
+  this->declare_parameter("angular_acceleration", 0.5);
 
-  max_speed_ = this->get_parameter("max_speed").as_double();
-  acceleration_ = this->get_parameter("acceleration").as_double();
+  max_linear_speed_ = this->get_parameter("max_linear_speed").as_double();
+  linear_acceleration_ = this->get_parameter("linear_acceleration").as_double();
+
+  max_angular_speed_ = this->get_parameter("max_angular_speed").as_double();
+  angular_acceleration_ = this->get_parameter("angular_acceleration").as_double();
 
   param_callback_handle_ = this->add_on_set_parameters_callback(
       std::bind(&MotorMove::on_parameter_change, this, std::placeholders::_1));
@@ -83,9 +74,11 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
 
   RCLCPP_INFO(this->get_logger(),
               "motor_move ready: odom_topic=odom base_frame=%s odom_frame=%s "
-              "max_speed=%.3f acceleration=%.3f",
-              base_frame_.c_str(), odom_frame_.c_str(), max_speed_.load(),
-              acceleration_.load());
+              "max_linear_speed=%.3f linear_acceleration=%.3f "
+              "max_angular_speed=%.3f angular_acceleration=%.3f",
+              base_frame_.c_str(), odom_frame_.c_str(),
+              max_linear_speed_.load(), linear_acceleration_.load(),
+              max_angular_speed_.load(), angular_acceleration_.load());
 }
 
 rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
@@ -95,7 +88,8 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
 
   for (const auto &param : parameters) {
     const auto &name = param.get_name();
-    if (name != "max_speed" && name != "acceleration") {
+    if (name != "max_linear_speed" && name != "linear_acceleration" &&
+        name != "max_angular_speed" && name != "angular_acceleration") {
       continue;
     }
     if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
@@ -111,14 +105,23 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
   }
 
   for (const auto &param : parameters) {
-    if (param.get_name() == "max_speed") {
-      max_speed_ = param.as_double();
-      RCLCPP_INFO(this->get_logger(), "max_speed set to %.3f",
-                  max_speed_.load());
-    } else if (param.get_name() == "acceleration") {
-      acceleration_ = param.as_double();
-      RCLCPP_INFO(this->get_logger(), "acceleration set to %.3f",
-                  acceleration_.load());
+    if (param.get_name() == "max_linear_speed") {
+      max_linear_speed_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "max_linear_speed set to %.3f",
+                  max_linear_speed_.load());
+    } else if (param.get_name() == "linear_acceleration") {
+      linear_acceleration_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "linear_acceleration set to %.3f",
+                  linear_acceleration_.load());
+    }
+    if (param.get_name() == "max_angular_speed") {
+      max_angular_speed_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "max_angular_speed set to %.3f",
+                  max_angular_speed_.load());
+    } else if (param.get_name() == "angular_acceleration") {
+      angular_acceleration_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "angular_acceleration set to %.3f",
+                  angular_acceleration_.load());
     }
   }
 
@@ -220,6 +223,12 @@ void MotorMove::handle_accepted(
     return;
   }
 
+  if (active_goal_) {
+    auto previous_result = std::make_shared<MotorMoveAction::Result>();
+    previous_result->success = false;
+    active_goal_->abort(previous_result);
+  }
+
   double x = 0.0;
   double y = 0.0;
   double yaw = 0.0;
@@ -227,12 +236,6 @@ void MotorMove::handle_accepted(
     result->success = false;
     goal_handle->abort(result);
     return;
-  }
-
-  if (active_goal_) {
-    auto previous_result = std::make_shared<MotorMoveAction::Result>();
-    previous_result->success = false;
-    active_goal_->abort(previous_result);
   }
 
   active_goal_ = goal_handle;
@@ -282,12 +285,6 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     return;
   }
 
-  double dt = (now - last_control_time_).seconds();
-  if (dt <= 0.0 || dt > 1.0) {
-    dt = 0.05;
-  }
-  last_control_time_ = now;
-
   const double dx = target_x_ - current_x_;
   const double dy = target_y_ - current_y_;
   const double distance = std::hypot(dx, dy);
@@ -297,6 +294,13 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
   feedback->distance_to_target = static_cast<float>(distance);
   feedback->yaw_error = static_cast<float>(abs_yaw_error);
   feedback->elapsed_time = static_cast<float>((now - goal_start_time_).seconds());
+
+  double dt = (now - last_control_time_).seconds();
+  if (dt <= 0.0 || dt > 1.0) {
+    dt = 0.05;
+  }
+  last_control_time_ = now;
+
 
   RCLCPP_INFO_THROTTLE(
       this->get_logger(), *this->get_clock(), 500,
@@ -314,41 +318,59 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     return;
   }
 
-  const double max_speed = max_speed_.load();
-  const double acceleration = acceleration_.load();
-  const double max_delta = acceleration * dt;
+  const double max_linear_speed = max_linear_speed_.load();
+  const double linear_acceleration = linear_acceleration_.load();
+
+  const double max_angular_speed = max_angular_speed_.load();
+  const double angular_acceleration = angular_acceleration_.load();
+
   const bool rotate_first = abs_yaw_error > kYawToleranceRadians;
+
+  const double braking_angle =
+      max_angular_speed * max_angular_speed / (2.0 * angular_acceleration);
+  const double braking_distance =
+      max_linear_speed * max_linear_speed / (2.0 * linear_acceleration);
 
   geometry_msgs::msg::Twist cmd;
 
   if (rotate_first) {
     linear_speed_ = 0.0;
 
-    const double target_angular_speed =
-        std::copysign(braking_speed(abs_yaw_error, max_speed, acceleration),
-                      yaw_error);
-    angular_speed_ =
-        ramp_toward(angular_speed_, target_angular_speed, max_delta);
-    angular_speed_ =
-        std::copysign(std::min(std::fabs(angular_speed_), abs_yaw_error / dt),
-                      angular_speed_);
+    if (abs_yaw_error > braking_angle) {
+      angular_speed_ += std::copysign(angular_acceleration * dt, yaw_error);
+
+      if (std::abs(angular_speed_) > max_angular_speed) {
+        angular_speed_ = std::copysign(max_angular_speed, yaw_error);
+      }
+    } else {
+      angular_speed_ =
+          std::copysign(std::sqrt(2.0 * angular_acceleration * abs_yaw_error),
+                        yaw_error);
+    }
+
     cmd.angular.z = angular_speed_;
   } else if (distance > kDistanceTolerance) {
     angular_speed_ = 0.0;
 
-    const double target_linear_speed =
-        braking_speed(distance, max_speed, acceleration);
-    linear_speed_ = ramp_toward(linear_speed_, target_linear_speed, max_delta);
-    linear_speed_ = std::min(linear_speed_, distance / dt);
+    if (distance > braking_distance) {
+      linear_speed_ += linear_acceleration * dt;
 
-    const double vx_odom = linear_speed_ * dx / distance;
-    const double vy_odom = linear_speed_ * dy / distance;
+      if (linear_speed_ > max_linear_speed) {
+        linear_speed_ = max_linear_speed;
+      }
+    } else {
+      linear_speed_ = std::sqrt(2.0 * linear_acceleration * distance);
+    }
 
-    const double cos_yaw = std::cos(current_yaw_);
-    const double sin_yaw = std::sin(current_yaw_);
+    const double dir_x = dx / distance;
+    const double dir_y = dy / distance;
 
-    cmd.linear.x = cos_yaw * vx_odom + sin_yaw * vy_odom;
-    cmd.linear.y = -sin_yaw * vx_odom + cos_yaw * vy_odom;
+    // odom/map direction -> robot/base_link direction
+    const double c = std::cos(current_yaw_);
+    const double s = std::sin(current_yaw_);
+
+    cmd.linear.x = linear_speed_ * ( c * dir_x + s * dir_y);
+    cmd.linear.y = linear_speed_ * (-s * dir_x + c * dir_y);
   } else {
     linear_speed_ = 0.0;
     angular_speed_ = 0.0;

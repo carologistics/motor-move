@@ -17,13 +17,16 @@ Fields:
 | Field | Description |
 |---|---|
 | `Action` | Action server name, for example `/robotinobase1/motor_move_action` |
-| `Param node` | Node whose `max_speed` and `acceleration` parameters are set |
+| `Param node` | Node whose motion parameters are set |
 | `Frame` | Frame for the outgoing goal pose |
 | `X`, `Y`, `Rot` | Goal pose in that frame |
-| `Max speed`, `Acceleration` | Dynamic parameters sent with `ros2 param` semantics |
+| `Max linear`, `Linear accel` | Linear dynamic parameters sent with `ros2 param` semantics |
+| `Max angular`, `Angular accel` | Angular dynamic parameters sent with `ros2 param` semantics |
 
-Changing `Max speed` or `Acceleration` sends a parameter update immediately
-after a short debounce. A checkmark is shown when the update succeeds.
+Changing any motion parameter sends a parameter update immediately after a
+short debounce. A checkmark is shown when the update succeeds.
 
 Press `Send` to send the action goal. The speed and position-error plots keep
-the ideal curve and add the real feedback curve while the action runs.
+the ideal curve and add the real feedback curve while the action runs. The
+ideal preview assumes the current motor_move behavior: rotate first, then drive
+the linear part.
