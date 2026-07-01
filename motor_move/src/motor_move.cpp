@@ -6,12 +6,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/utils.h>
 
 namespace motor_move {
 namespace {
 
 constexpr double kTimeoutSeconds = 10.0;
-constexpr double kDistanceTolerance = 0.02;
+constexpr double kDistanceTolerance = 0.01;
 constexpr double kYawToleranceRadians = 2.0 * M_PI / 180.0;
 
 double normalize_angle(double angle) {
@@ -38,10 +40,18 @@ std::string frame_with_namespace(const std::string &ns,
   return ns.substr(1) + "/" + frame;
 }
 
+std::string strip_leading_slash(const std::string &frame) {
+  if (!frame.empty() && frame.front() == '/') {
+    return frame.substr(1);
+  }
+  return frame;
+}
+
 } // namespace
 
 MotorMove::MotorMove(const rclcpp::NodeOptions &options)
-    : Node("motor_move", options) {
+    : Node("motor_move", options), tf_buffer_(this->get_clock()),
+      tf_listener_(tf_buffer_) {
   namespace_ = this->get_namespace();
   odom_frame_ = frame_with_namespace(namespace_, "odom");
   base_frame_ = frame_with_namespace(namespace_, "base_link");
@@ -150,7 +160,7 @@ bool MotorMove::frame_is(const std::string &frame,
 }
 
 bool MotorMove::goal_to_odom(const PoseStamped &goal, double &x, double &y,
-                             double &yaw) const {
+                             double &yaw) {
   const std::string frame =
       goal.header.frame_id.empty() ? base_frame_ : goal.header.frame_id;
   const double goal_yaw = yaw_from_quaternion(goal.pose.orientation);
@@ -171,6 +181,22 @@ bool MotorMove::goal_to_odom(const PoseStamped &goal, double &x, double &y,
         cos_yaw * goal.pose.position.y;
     yaw = normalize_angle(current_yaw_ + goal_yaw);
     return true;
+  }
+
+  PoseStamped stamped_goal = goal;
+  stamped_goal.header.frame_id = strip_leading_slash(frame);
+
+  try {
+    const PoseStamped odom_goal = tf_buffer_.transform(
+        stamped_goal, odom_frame_, tf2::durationFromSec(0.1));
+    x = odom_goal.pose.position.x;
+    y = odom_goal.pose.position.y;
+    yaw = tf2::getYaw(odom_goal.pose.orientation);
+    return true;
+  } catch (const tf2::TransformException &ex) {
+    RCLCPP_WARN(this->get_logger(),
+                "Could not transform goal from frame '%s' to '%s': %s",
+                frame.c_str(), odom_frame_.c_str(), ex.what());
   }
 
   return false;
@@ -202,10 +228,8 @@ MotorMove::handle_goal(const rclcpp_action::GoalUUID &uuid,
   double yaw = 0.0;
   if (!goal_to_odom(goal->motor_goal, x, y, yaw)) {
     RCLCPP_ERROR(this->get_logger(),
-                 "Rejecting goal: frame '%s' is not supported. Use '%s' or "
-                 "'%s'.",
-                 goal->motor_goal.header.frame_id.c_str(), odom_frame_.c_str(),
-                 base_frame_.c_str());
+                 "Rejecting goal: frame '%s' cannot be transformed to '%s'",
+                 goal->motor_goal.header.frame_id.c_str(), odom_frame_.c_str());
     return rclcpp_action::GoalResponse::REJECT;
   }
 

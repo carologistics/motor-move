@@ -3,8 +3,10 @@
 Simple ROS 2 action server for moving an omnidirectional robot to a target pose.
 
 The action goal is a `geometry_msgs/PoseStamped`. Its `header.frame_id` tells
-the node which frame the target is in. The node stores that target in odom, then
-looks it up against `base_link` every control cycle and publishes `cmd_vel`.
+the node which frame the target is in. Goals may be sent in any frame that can
+be transformed to the robot's odom frame. An empty `frame_id` is treated as the
+robot's `base_link` frame. The node stores that target in odom, then publishes
+`cmd_vel` every control cycle.
 
 ## Build
 
@@ -50,13 +52,23 @@ ros2 action send_goal /robotinobase1/motor_move_action motor_move_msgs/action/Mo
   orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}}" --feedback
 ```
 
+Move to a pose in any TF-connected frame:
+
+```bash
+ros2 action send_goal /robotinobase1/motor_move_action motor_move_msgs/action/MotorMove \
+  "{motor_goal: {header: {frame_id: 'map'}, \
+  pose: {position: {x: 2.0, y: 1.0, z: 0.0}, \
+  orientation: {x: 0.0, y: 0.0, z: 0.707, w: 0.707}}}}" --feedback
+```
+
 Feedback: `distance_to_target` in meters.
 Result: `success`.
 
 ## Control
 
-Each cycle the node transforms the stored target into `base_link`, computes the
-remaining linear and yaw error, and commands velocity toward the target.
+Each cycle the node compares the stored odom target to the current odom pose,
+computes the remaining linear and yaw error, and commands velocity toward the
+target.
 
 Speed follows a simple acceleration/braking rule:
 
@@ -87,8 +99,8 @@ ros2 param set /robotinobase1/motor_move acceleration 0.3
 
 Publishes: `/{namespace}/cmd_vel` (`geometry_msgs/Twist`)
 
-Requires TF2:
+Requires TF2 for goals outside odom/base_link:
 
 ```text
-{namespace}/odom -> {namespace}/base_link
+target frame -> {namespace}/odom
 ```

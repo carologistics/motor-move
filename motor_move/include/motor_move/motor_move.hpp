@@ -12,6 +12,8 @@
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 #include <mutex>
 
@@ -32,6 +34,8 @@ private:
   rclcpp_action::Server<MotorMoveAction>::SharedPtr action_server_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
       param_callback_handle_;
+  tf2_ros::Buffer tf_buffer_;
+  tf2_ros::TransformListener tf_listener_;
 
   std::string namespace_;
   std::string base_frame_;
@@ -73,7 +77,7 @@ private:
 
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   bool goal_to_odom(const PoseStamped &goal, double &x, double &y,
-                    double &yaw) const;
+                    double &yaw);
   bool frame_is(const std::string &frame, const std::string &expected) const;
   void publish_stop();
   void clear_active_goal();
