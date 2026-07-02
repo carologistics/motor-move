@@ -71,6 +71,7 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   this->declare_parameter("angular_acceleration", 0.5);
   this->declare_parameter("linear_kp", 1.0);
   this->declare_parameter("angular_kp", 1.5);
+  this->declare_parameter("transform_timeout", 1.0);
 
   max_linear_speed_ = this->get_parameter("max_linear_speed").as_double();
   linear_acceleration_ = this->get_parameter("linear_acceleration").as_double();
@@ -79,6 +80,7 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   angular_acceleration_ = this->get_parameter("angular_acceleration").as_double();
   linear_kp_ = this->get_parameter("linear_kp").as_double();
   angular_kp_ = this->get_parameter("angular_kp").as_double();
+  transform_timeout_ = this->get_parameter("transform_timeout").as_double();
 
   param_callback_handle_ = this->add_on_set_parameters_callback(
       std::bind(&MotorMove::on_parameter_change, this, std::placeholders::_1));
@@ -94,11 +96,11 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
               "motor_move ready: odom_topic=odom base_frame=%s odom_frame=%s "
               "max_linear_speed=%.3f linear_acceleration=%.3f "
               "max_angular_speed=%.3f angular_acceleration=%.3f "
-              "linear_kp=%.3f angular_kp=%.3f",
+              "linear_kp=%.3f angular_kp=%.3f transform_timeout=%.3f",
               base_frame_.c_str(), odom_frame_.c_str(),
               max_linear_speed_.load(), linear_acceleration_.load(),
               max_angular_speed_.load(), angular_acceleration_.load(),
-              linear_kp_.load(), angular_kp_.load());
+              linear_kp_.load(), angular_kp_.load(), transform_timeout_.load());
 }
 
 rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
@@ -110,7 +112,8 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
     const auto &name = param.get_name();
     if (name != "max_linear_speed" && name != "linear_acceleration" &&
         name != "max_angular_speed" && name != "angular_acceleration" &&
-        name != "linear_kp" && name != "angular_kp") {
+        name != "linear_kp" && name != "angular_kp" &&
+        name != "transform_timeout") {
       continue;
     }
     if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
@@ -151,6 +154,10 @@ rcl_interfaces::msg::SetParametersResult MotorMove::on_parameter_change(
       angular_kp_ = param.as_double();
       RCLCPP_INFO(this->get_logger(), "angular_kp set to %.3f",
                   angular_kp_.load());
+    } else if (param.get_name() == "transform_timeout") {
+      transform_timeout_ = param.as_double();
+      RCLCPP_INFO(this->get_logger(), "transform_timeout set to %.3f",
+                  transform_timeout_.load());
     }
   }
 
@@ -192,7 +199,8 @@ bool MotorMove::goal_to_odom(const PoseStamped &goal, double &x, double &y,
 
   try {
     const PoseStamped odom_goal = tf_buffer_.transform(
-        stamped_goal, odom_frame_, tf2::durationFromSec(0.1));
+        stamped_goal, odom_frame_,
+        tf2::durationFromSec(transform_timeout_.load()));
     x = odom_goal.pose.position.x;
     y = odom_goal.pose.position.y;
     yaw = tf2::getYaw(odom_goal.pose.orientation);

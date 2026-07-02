@@ -86,13 +86,19 @@ Configured in `motor_move/config/motor_move.yaml`:
 
 | Parameter | Default | Dynamic | Description |
 |---|---:|---|---|
-| `max_speed` | `0.5` | yes | Maximum linear speed [m/s] and yaw speed [rad/s] |
-| `acceleration` | `0.5` | yes | Linear acceleration [m/s^2] and yaw acceleration [rad/s^2] |
+| `max_linear_speed` | `0.5` | yes | Maximum linear speed [m/s] |
+| `linear_acceleration` | `0.5` | yes | Linear acceleration [m/s^2] |
+| `max_angular_speed` | `0.5` | yes | Maximum yaw speed [rad/s] |
+| `angular_acceleration` | `0.5` | yes | Yaw acceleration [rad/s^2] |
+| `linear_kp` | `1.0` | yes | Linear proportional damping near the target |
+| `angular_kp` | `1.5` | yes | Yaw proportional damping near the target |
+| `transform_timeout` | `1.0` | yes | Seconds to wait for TF when transforming non-odom goals |
 Update dynamic parameters while the node runs:
 
 ```bash
-ros2 param set /robotinobase1/motor_move max_speed 0.4
-ros2 param set /robotinobase1/motor_move acceleration 0.3
+ros2 param set /robotinobase1/motor_move max_linear_speed 0.4
+ros2 param set /robotinobase1/motor_move linear_acceleration 0.3
+ros2 param set /robotinobase1/motor_move transform_timeout 1.5
 ```
 
 ## Topics and Frames

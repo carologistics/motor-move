@@ -51,6 +51,7 @@ private:
   std::atomic<double> angular_acceleration_;
   std::atomic<double> linear_kp_;
   std::atomic<double> angular_kp_;
+  std::atomic<double> transform_timeout_;
 
   std::mutex state_mutex_;
   bool have_odom_ = false;
