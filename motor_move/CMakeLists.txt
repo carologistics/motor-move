@@ -12,6 +12,7 @@ find_package(rclcpp_action REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(motor_move_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -29,6 +30,7 @@ ament_target_dependencies(${PROJECT_NAME}
   geometry_msgs
   nav_msgs
   motor_move_msgs
+  sensor_msgs
   tf2
   tf2_geometry_msgs
   tf2_ros

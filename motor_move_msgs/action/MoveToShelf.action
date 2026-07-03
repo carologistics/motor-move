@@ -1,0 +1,8 @@
+bool on
+---
+bool success
+string message
+---
+float32 front_range
+bool saw_shelf
+float32 elapsed_time

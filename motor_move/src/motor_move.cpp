@@ -7,13 +7,17 @@
 #include <algorithm>
 #include <cmath>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace motor_move {
 namespace {
 
 constexpr double kTimeoutSeconds = 10.0;
+constexpr double kShelfTimeoutSeconds = 5.0;
+constexpr double kShelfForwardSpeed = 0.05;
+constexpr double kShelfCloseRange = 0.30;
+constexpr double kShelfFarRange = 0.60;
 constexpr double kDistanceTolerance = 0.01;
 constexpr double kYawToleranceRadians = 2.0 * M_PI / 180.0;
 
@@ -58,12 +62,14 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   base_frame_ = frame_with_namespace(namespace_, "base_link");
 
   cmd_vel_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
-  target_marker_pub_ =
-      this->create_publisher<visualization_msgs::msg::Marker>("target_marker",
-                                                              10);
+  target_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
+      "target_marker", 10);
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       "odom", rclcpp::SensorDataQoS(),
       std::bind(&MotorMove::odom_callback, this, std::placeholders::_1));
+  ir_scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+      "irsensor_scan", rclcpp::SensorDataQoS(),
+      std::bind(&MotorMove::ir_scan_callback, this, std::placeholders::_1));
 
   this->declare_parameter("max_linear_speed", 0.5);
   this->declare_parameter("linear_acceleration", 0.5);
@@ -77,7 +83,8 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
   linear_acceleration_ = this->get_parameter("linear_acceleration").as_double();
 
   max_angular_speed_ = this->get_parameter("max_angular_speed").as_double();
-  angular_acceleration_ = this->get_parameter("angular_acceleration").as_double();
+  angular_acceleration_ =
+      this->get_parameter("angular_acceleration").as_double();
   linear_kp_ = this->get_parameter("linear_kp").as_double();
   angular_kp_ = this->get_parameter("angular_kp").as_double();
   transform_timeout_ = this->get_parameter("transform_timeout").as_double();
@@ -91,6 +98,13 @@ MotorMove::MotorMove(const rclcpp::NodeOptions &options)
                 std::placeholders::_2),
       std::bind(&MotorMove::handle_cancel, this, std::placeholders::_1),
       std::bind(&MotorMove::handle_accepted, this, std::placeholders::_1));
+  move_to_shelf_server_ = rclcpp_action::create_server<MoveToShelfAction>(
+      this, "move_to_shelf_action",
+      std::bind(&MotorMove::handle_shelf_goal, this, std::placeholders::_1,
+                std::placeholders::_2),
+      std::bind(&MotorMove::handle_shelf_cancel, this, std::placeholders::_1),
+      std::bind(&MotorMove::handle_shelf_accepted, this,
+                std::placeholders::_1));
 
   RCLCPP_INFO(this->get_logger(),
               "motor_move ready: odom_topic=odom base_frame=%s odom_frame=%s "
@@ -198,9 +212,9 @@ bool MotorMove::goal_to_odom(const PoseStamped &goal, double &x, double &y,
   stamped_goal.header.frame_id = strip_leading_slash(frame);
 
   try {
-    const PoseStamped odom_goal = tf_buffer_.transform(
-        stamped_goal, odom_frame_,
-        tf2::durationFromSec(transform_timeout_.load()));
+    const PoseStamped odom_goal =
+        tf_buffer_.transform(stamped_goal, odom_frame_,
+                             tf2::durationFromSec(transform_timeout_.load()));
     x = odom_goal.pose.position.x;
     y = odom_goal.pose.position.y;
     yaw = tf2::getYaw(odom_goal.pose.orientation);
@@ -249,6 +263,11 @@ void MotorMove::clear_active_goal() {
   active_goal_.reset();
   linear_speed_ = 0.0;
   angular_speed_ = 0.0;
+}
+
+void MotorMove::clear_active_shelf_goal() {
+  active_shelf_goal_.reset();
+  shelf_saw_close_range_ = false;
 }
 
 rclcpp_action::GoalResponse
@@ -325,10 +344,139 @@ void MotorMove::handle_accepted(
   goal_start_time_ = this->now();
   last_control_time_ = goal_start_time_;
 
-  RCLCPP_INFO(this->get_logger(),
-              "Stored odom target: x=%.3f y=%.3f yaw=%.3f", target_x_,
-              target_y_, target_yaw_);
+  RCLCPP_INFO(this->get_logger(), "Stored odom target: x=%.3f y=%.3f yaw=%.3f",
+              target_x_, target_y_, target_yaw_);
   publish_target_marker();
+}
+
+rclcpp_action::GoalResponse MotorMove::handle_shelf_goal(
+    const rclcpp_action::GoalUUID &uuid,
+    std::shared_ptr<const MoveToShelfAction::Goal> goal) {
+  (void)uuid;
+
+  RCLCPP_INFO(this->get_logger(), "Accepted move_to_shelf %s request",
+              goal->on ? "on" : "off");
+  return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse MotorMove::handle_shelf_cancel(
+    const std::shared_ptr<GoalHandleMoveToShelf> goal_handle) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (active_shelf_goal_ == goal_handle) {
+    publish_stop();
+  }
+  RCLCPP_INFO(this->get_logger(), "move_to_shelf cancel requested");
+  return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void MotorMove::handle_shelf_accepted(
+    const std::shared_ptr<GoalHandleMoveToShelf> goal_handle) {
+  auto result = std::make_shared<MoveToShelfAction::Result>();
+  std::lock_guard<std::mutex> lock(state_mutex_);
+
+  if (!goal_handle->get_goal()->on) {
+    publish_stop();
+    if (active_shelf_goal_) {
+      auto previous_result = std::make_shared<MoveToShelfAction::Result>();
+      previous_result->success = false;
+      previous_result->message = "turned off";
+      active_shelf_goal_->abort(previous_result);
+      clear_active_shelf_goal();
+    }
+    result->success = true;
+    result->message = "off";
+    goal_handle->succeed(result);
+    return;
+  }
+
+  if (active_goal_) {
+    auto previous_result = std::make_shared<MotorMoveAction::Result>();
+    previous_result->success = false;
+    active_goal_->abort(previous_result);
+    clear_active_goal();
+  }
+
+  if (active_shelf_goal_) {
+    auto previous_result = std::make_shared<MoveToShelfAction::Result>();
+    previous_result->success = false;
+    previous_result->message = "replaced by new goal";
+    active_shelf_goal_->abort(previous_result);
+  }
+
+  active_shelf_goal_ = goal_handle;
+  shelf_goal_start_time_ = this->now();
+  shelf_saw_close_range_ = false;
+
+  geometry_msgs::msg::Twist cmd;
+  cmd.linear.x = kShelfForwardSpeed;
+  cmd_vel_->publish(cmd);
+
+  RCLCPP_INFO(this->get_logger(),
+              "move_to_shelf started: speed=%.3f timeout=%.1f close=%.2f "
+              "far=%.2f",
+              kShelfForwardSpeed, kShelfTimeoutSeconds, kShelfCloseRange,
+              kShelfFarRange);
+}
+
+void MotorMove::ir_scan_callback(
+    const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+
+  if (!active_shelf_goal_) {
+    return;
+  }
+
+  auto feedback = std::make_shared<MoveToShelfAction::Feedback>();
+  auto result = std::make_shared<MoveToShelfAction::Result>();
+  const rclcpp::Time now = this->now();
+  const double elapsed = (now - shelf_goal_start_time_).seconds();
+
+  const float front_range =
+      msg->ranges.empty() ? msg->range_max : msg->ranges[0];
+  feedback->front_range = front_range;
+  feedback->saw_shelf = shelf_saw_close_range_;
+  feedback->elapsed_time = static_cast<float>(elapsed);
+  active_shelf_goal_->publish_feedback(feedback);
+
+  if (active_shelf_goal_->is_canceling()) {
+    publish_stop();
+    result->success = false;
+    result->message = "canceled";
+    active_shelf_goal_->canceled(result);
+    clear_active_shelf_goal();
+    return;
+  }
+
+  if (elapsed > kShelfTimeoutSeconds) {
+    publish_stop();
+    result->success = false;
+    result->message = "timeout";
+    active_shelf_goal_->abort(result);
+    clear_active_shelf_goal();
+    RCLCPP_WARN(this->get_logger(), "move_to_shelf timed out");
+    return;
+  }
+
+  if (std::isfinite(front_range) && front_range < kShelfCloseRange) {
+    shelf_saw_close_range_ = true;
+  }
+
+  if (shelf_saw_close_range_ && std::isfinite(front_range) &&
+      front_range > kShelfFarRange) {
+    publish_stop();
+    result->success = true;
+    result->message = "shelf edge detected";
+    active_shelf_goal_->succeed(result);
+    clear_active_shelf_goal();
+    RCLCPP_INFO(this->get_logger(),
+                "move_to_shelf stopped: front range crossed back to %.3f",
+                front_range);
+    return;
+  }
+
+  geometry_msgs::msg::Twist cmd;
+  cmd.linear.x = kShelfForwardSpeed;
+  cmd_vel_->publish(cmd);
 }
 
 void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -339,7 +487,7 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
   current_yaw_ = yaw_from_quaternion(msg->pose.pose.orientation);
   have_odom_ = true;
 
-  if (!active_goal_) {
+  if (!active_goal_ || active_shelf_goal_) {
     return;
   }
 
@@ -372,14 +520,14 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
 
   feedback->distance_to_target = static_cast<float>(distance);
   feedback->yaw_error = static_cast<float>(abs_yaw_error);
-  feedback->elapsed_time = static_cast<float>((now - goal_start_time_).seconds());
+  feedback->elapsed_time =
+      static_cast<float>((now - goal_start_time_).seconds());
 
   double dt = (now - last_control_time_).seconds();
   if (dt <= 0.0 || dt > 1.0) {
     dt = 0.05;
   }
   last_control_time_ = now;
-
 
   RCLCPP_INFO_THROTTLE(
       this->get_logger(), *this->get_clock(), 500,
@@ -430,9 +578,9 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
       angular_speed_ =
           std::copysign(std::min(profile_speed, damping_speed), yaw_error);
     }
-    angular_speed_ = std::copysign(
-        std::min(std::fabs(angular_speed_), abs_yaw_error / dt),
-        angular_speed_);
+    angular_speed_ =
+        std::copysign(std::min(std::fabs(angular_speed_), abs_yaw_error / dt),
+                      angular_speed_);
 
     cmd.angular.z = angular_speed_;
   } else if (distance > kDistanceTolerance) {
@@ -459,7 +607,7 @@ void MotorMove::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     const double c = std::cos(current_yaw_);
     const double s = std::sin(current_yaw_);
 
-    cmd.linear.x = linear_speed_ * ( c * dir_x + s * dir_y);
+    cmd.linear.x = linear_speed_ * (c * dir_x + s * dir_y);
     cmd.linear.y = linear_speed_ * (-s * dir_x + c * dir_y);
   } else {
     linear_speed_ = 0.0;

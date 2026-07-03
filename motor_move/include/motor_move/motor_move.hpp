@@ -8,10 +8,12 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <motor_move_msgs/action/motor_move.hpp>
+#include <motor_move_msgs/action/move_to_shelf.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/msg/marker.hpp>
@@ -22,6 +24,9 @@ namespace motor_move {
 
 using MotorMoveAction = motor_move_msgs::action::MotorMove;
 using GoalHandleMotorMove = rclcpp_action::ServerGoalHandle<MotorMoveAction>;
+using MoveToShelfAction = motor_move_msgs::action::MoveToShelf;
+using GoalHandleMoveToShelf =
+    rclcpp_action::ServerGoalHandle<MoveToShelfAction>;
 using PoseStamped = geometry_msgs::msg::PoseStamped;
 
 class MotorMove : public rclcpp::Node {
@@ -34,7 +39,9 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
       target_marker_pub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr ir_scan_sub_;
   rclcpp_action::Server<MotorMoveAction>::SharedPtr action_server_;
+  rclcpp_action::Server<MoveToShelfAction>::SharedPtr move_to_shelf_server_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
       param_callback_handle_;
   tf2_ros::Buffer tf_buffer_;
@@ -68,6 +75,9 @@ private:
   rclcpp::Time goal_start_time_;
   rclcpp::Time last_control_time_;
 
+  std::shared_ptr<GoalHandleMoveToShelf> active_shelf_goal_;
+  rclcpp::Time shelf_goal_start_time_;
+  bool shelf_saw_close_range_ = false;
 
   rclcpp_action::GoalResponse
   handle_goal(const rclcpp_action::GoalUUID &uuid,
@@ -76,16 +86,25 @@ private:
   handle_cancel(const std::shared_ptr<GoalHandleMotorMove> goal_handle);
   void handle_accepted(const std::shared_ptr<GoalHandleMotorMove> goal_handle);
 
+  rclcpp_action::GoalResponse
+  handle_shelf_goal(const rclcpp_action::GoalUUID &uuid,
+                    std::shared_ptr<const MoveToShelfAction::Goal> goal);
+  rclcpp_action::CancelResponse
+  handle_shelf_cancel(const std::shared_ptr<GoalHandleMoveToShelf> goal_handle);
+  void handle_shelf_accepted(
+      const std::shared_ptr<GoalHandleMoveToShelf> goal_handle);
+
   rcl_interfaces::msg::SetParametersResult
   on_parameter_change(const std::vector<rclcpp::Parameter> &parameters);
 
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
-  bool goal_to_odom(const PoseStamped &goal, double &x, double &y,
-                    double &yaw);
+  void ir_scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  bool goal_to_odom(const PoseStamped &goal, double &x, double &y, double &yaw);
   bool frame_is(const std::string &frame, const std::string &expected) const;
   void publish_target_marker();
   void publish_stop();
   void clear_active_goal();
+  void clear_active_shelf_goal();
 };
 
 } // namespace motor_move
