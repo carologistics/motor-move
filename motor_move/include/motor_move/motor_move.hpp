@@ -77,7 +77,6 @@ private:
 
   std::shared_ptr<GoalHandleMoveToShelf> active_shelf_goal_;
   rclcpp::Time shelf_goal_start_time_;
-  bool shelf_saw_close_range_ = false;
 
   rclcpp_action::GoalResponse
   handle_goal(const rclcpp_action::GoalUUID &uuid,

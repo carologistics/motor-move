@@ -14,10 +14,7 @@ namespace motor_move {
 namespace {
 
 constexpr double kTimeoutSeconds = 10.0;
-constexpr double kShelfTimeoutSeconds = 5.0;
-constexpr double kShelfForwardSpeed = 0.05;
 constexpr double kShelfCloseRange = 0.30;
-constexpr double kShelfFarRange = 0.60;
 constexpr double kDistanceTolerance = 0.01;
 constexpr double kYawToleranceRadians = 2.0 * M_PI / 180.0;
 
@@ -267,7 +264,6 @@ void MotorMove::clear_active_goal() {
 
 void MotorMove::clear_active_shelf_goal() {
   active_shelf_goal_.reset();
-  shelf_saw_close_range_ = false;
 }
 
 rclcpp_action::GoalResponse
@@ -354,8 +350,7 @@ rclcpp_action::GoalResponse MotorMove::handle_shelf_goal(
     std::shared_ptr<const MoveToShelfAction::Goal> goal) {
   (void)uuid;
 
-  RCLCPP_INFO(this->get_logger(), "Accepted move_to_shelf %s request",
-              goal->on ? "on" : "off");
+  RCLCPP_INFO(this->get_logger(), "Accepted move_to_shelf request");
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -374,21 +369,6 @@ void MotorMove::handle_shelf_accepted(
   auto result = std::make_shared<MoveToShelfAction::Result>();
   std::lock_guard<std::mutex> lock(state_mutex_);
 
-  if (!goal_handle->get_goal()->on) {
-    publish_stop();
-    if (active_shelf_goal_) {
-      auto previous_result = std::make_shared<MoveToShelfAction::Result>();
-      previous_result->success = false;
-      previous_result->message = "turned off";
-      active_shelf_goal_->abort(previous_result);
-      clear_active_shelf_goal();
-    }
-    result->success = true;
-    result->message = "off";
-    goal_handle->succeed(result);
-    return;
-  }
-
   if (active_goal_) {
     auto previous_result = std::make_shared<MotorMoveAction::Result>();
     previous_result->success = false;
@@ -405,17 +385,14 @@ void MotorMove::handle_shelf_accepted(
 
   active_shelf_goal_ = goal_handle;
   shelf_goal_start_time_ = this->now();
-  shelf_saw_close_range_ = false;
 
   geometry_msgs::msg::Twist cmd;
-  cmd.linear.x = kShelfForwardSpeed;
+  cmd.linear.x = goal_handle->get_goal()->speed;
   cmd_vel_->publish(cmd);
 
   RCLCPP_INFO(this->get_logger(),
-              "move_to_shelf started: speed=%.3f timeout=%.1f close=%.2f "
-              "far=%.2f",
-              kShelfForwardSpeed, kShelfTimeoutSeconds, kShelfCloseRange,
-              kShelfFarRange);
+              "move_to_shelf started: speed=%.3f timeout=%.1f close=%.2f",
+              goal_handle->get_goal()->speed, goal_handle->get_goal()->timeout, kShelfCloseRange);
 }
 
 void MotorMove::ir_scan_callback(
@@ -434,7 +411,6 @@ void MotorMove::ir_scan_callback(
   const float front_range =
       msg->ranges.empty() ? msg->range_max : msg->ranges[0];
   feedback->front_range = front_range;
-  feedback->saw_shelf = shelf_saw_close_range_;
   feedback->elapsed_time = static_cast<float>(elapsed);
   active_shelf_goal_->publish_feedback(feedback);
 
@@ -447,7 +423,7 @@ void MotorMove::ir_scan_callback(
     return;
   }
 
-  if (elapsed > kShelfTimeoutSeconds) {
+  if (elapsed > active_shelf_goal_->get_goal()->timeout) {
     publish_stop();
     result->success = false;
     result->message = "timeout";
@@ -457,12 +433,8 @@ void MotorMove::ir_scan_callback(
     return;
   }
 
-  if (std::isfinite(front_range) && front_range < kShelfCloseRange) {
-    shelf_saw_close_range_ = true;
-  }
-
-  if (shelf_saw_close_range_ && std::isfinite(front_range) &&
-      front_range > kShelfFarRange) {
+  if (std::isfinite(front_range) &&
+      front_range < kShelfCloseRange) {
     publish_stop();
     result->success = true;
     result->message = "shelf edge detected";
@@ -475,7 +447,7 @@ void MotorMove::ir_scan_callback(
   }
 
   geometry_msgs::msg::Twist cmd;
-  cmd.linear.x = kShelfForwardSpeed;
+  cmd.linear.x = active_shelf_goal_->get_goal()->speed;
   cmd_vel_->publish(cmd);
 }
 
